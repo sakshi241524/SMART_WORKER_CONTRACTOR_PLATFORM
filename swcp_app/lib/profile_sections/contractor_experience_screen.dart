@@ -2,39 +2,39 @@ import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 
-class WorkHistoryScreen extends StatefulWidget {
-  const WorkHistoryScreen({super.key});
+class ContractorExperienceScreen extends StatefulWidget {
+  const ContractorExperienceScreen({super.key});
 
   @override
-  State<WorkHistoryScreen> createState() => _WorkHistoryScreenState();
+  State<ContractorExperienceScreen> createState() => _ContractorExperienceScreenState();
 }
 
-class _WorkHistoryScreenState extends State<WorkHistoryScreen> {
-  final List<Map<String, String>> _workHistory = [];
+class _ContractorExperienceScreenState extends State<ContractorExperienceScreen> {
+  final List<Map<String, String>> _experience = [];
   bool _isLoading = false;
 
-  final TextEditingController _companyController = TextEditingController();
-  final TextEditingController _durationController = TextEditingController();
+  final TextEditingController _contractNameController = TextEditingController();
+  final TextEditingController _yearController = TextEditingController();
 
   @override
   void initState() {
     super.initState();
-    _loadWorkHistory();
+    _loadExperience();
   }
 
-  Future<void> _loadWorkHistory() async {
+  Future<void> _loadExperience() async {
     setState(() => _isLoading = true);
     final user = FirebaseAuth.instance.currentUser;
     if (user != null) {
       final doc = await FirebaseFirestore.instance.collection('users').doc(user.uid).get();
       if (doc.exists) {
         final data = doc.data() as Map<String, dynamic>;
-        if (data['work_history'] != null) {
+        if (data['work_experience'] != null) {
           setState(() {
-            _workHistory.clear();
-            _workHistory.addAll(List<Map<String, dynamic>>.from(data['work_history']).map((e) => {
-              'company': e['company'].toString(),
-              'duration': e['duration'].toString(),
+            _experience.clear();
+            _experience.addAll(List<Map<String, dynamic>>.from(data['work_experience']).map((e) => {
+              'contract_name': e['contract_name'].toString(),
+              'year': e['year'].toString(),
             }));
           });
         }
@@ -43,31 +43,37 @@ class _WorkHistoryScreenState extends State<WorkHistoryScreen> {
     if (mounted) setState(() => _isLoading = false);
   }
 
-  Future<void> _addHistoryItem() async {
+  Future<void> _addExperienceItem() async {
     showDialog(
       context: context,
       builder: (context) => AlertDialog(
-        title: const Text("Add Work History"),
+        title: const Text("Add Contract Experience"),
         content: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            TextField(controller: _companyController, decoration: const InputDecoration(labelText: "Company Name")),
-            TextField(controller: _durationController, decoration: const InputDecoration(labelText: "Duration (e.g. 2020-2023)")),
+            TextField(
+              controller: _contractNameController, 
+              decoration: const InputDecoration(labelText: "Contract Name", hintText: "e.g. Hospital Construction")
+            ),
+            TextField(
+              controller: _yearController, 
+              decoration: const InputDecoration(labelText: "Year", hintText: "e.g. 2022")
+            ),
           ],
         ),
         actions: [
           TextButton(onPressed: () => Navigator.pop(context), child: const Text("Cancel")),
           ElevatedButton(
             onPressed: () {
-              if (_companyController.text.isNotEmpty && _durationController.text.isNotEmpty) {
+              if (_contractNameController.text.isNotEmpty && _yearController.text.isNotEmpty) {
                 setState(() {
-                  _workHistory.add({
-                    'company': _companyController.text,
-                    'duration': _durationController.text,
+                  _experience.add({
+                    'contract_name': _contractNameController.text,
+                    'year': _yearController.text,
                   });
                 });
-                _companyController.clear();
-                _durationController.clear();
+                _contractNameController.clear();
+                _yearController.clear();
                 Navigator.pop(context);
               }
             },
@@ -84,12 +90,12 @@ class _WorkHistoryScreenState extends State<WorkHistoryScreen> {
       final user = FirebaseAuth.instance.currentUser;
       if (user != null) {
         await FirebaseFirestore.instance.collection('users').doc(user.uid).set({
-          'work_history': _workHistory,
+          'work_experience': _experience,
         }, SetOptions(merge: true));
         
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text("Work history updated!"), backgroundColor: Colors.green),
+            const SnackBar(content: Text("Work experience updated!"), backgroundColor: Colors.green),
           );
           Navigator.pop(context, true);
         }
@@ -97,7 +103,7 @@ class _WorkHistoryScreenState extends State<WorkHistoryScreen> {
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text("Error saving work history: $e"), backgroundColor: Colors.red),
+          SnackBar(content: Text("Error saving work experience: $e"), backgroundColor: Colors.red),
         );
       }
     } finally {
@@ -109,14 +115,14 @@ class _WorkHistoryScreenState extends State<WorkHistoryScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text("Work History", style: TextStyle(fontWeight: FontWeight.bold)),
+        title: const Text("Work Experience", style: TextStyle(fontWeight: FontWeight.bold)),
         backgroundColor: Colors.white,
-        foregroundColor: Colors.black,
+        foregroundColor: const Color(0xFF0F3A40),
         elevation: 0,
         actions: [
           IconButton(
-            icon: const Icon(Icons.add_circle_outline, color: Color(0xFF0F3A40)),
-            onPressed: _addHistoryItem,
+            icon: const Icon(Icons.add_circle_outline, color: Color(0xFFA5555A)),
+            onPressed: _addExperienceItem,
           ),
         ],
       ),
@@ -127,12 +133,12 @@ class _WorkHistoryScreenState extends State<WorkHistoryScreen> {
             child: Column(
               children: [
                 Expanded(
-                  child: _workHistory.isEmpty 
-                    ? const Center(child: Text("No work history added.", style: TextStyle(color: Colors.grey)))
+                  child: _experience.isEmpty 
+                    ? const Center(child: Text("No contract history added yet.", style: TextStyle(color: Colors.grey)))
                     : ListView.builder(
-                        itemCount: _workHistory.length,
+                        itemCount: _experience.length,
                         itemBuilder: (context, index) {
-                          final item = _workHistory[index];
+                          final item = _experience[index];
                           return Card(
                             margin: const EdgeInsets.symmetric(vertical: 8),
                             elevation: 0,
@@ -142,14 +148,14 @@ class _WorkHistoryScreenState extends State<WorkHistoryScreen> {
                             ),
                             child: ListTile(
                               leading: const CircleAvatar(
-                                backgroundColor: Color(0xFFE8F1F1),
-                                child: Icon(Icons.business, color: Color(0xFF0F3A40)),
+                                backgroundColor: Color(0xFFFBFBFC),
+                                child: Icon(Icons.business_center, color: Color(0xFF0F3A40)),
                               ),
-                              title: Text(item['company']!, style: const TextStyle(fontWeight: FontWeight.bold)),
-                              subtitle: Text(item['duration']!),
+                              title: Text(item['contract_name']!, style: const TextStyle(fontWeight: FontWeight.bold)),
+                              subtitle: Text("Year: ${item['year']}"),
                               trailing: IconButton(
                                 icon: const Icon(Icons.delete_outline, color: Colors.red),
-                                onPressed: () => setState(() => _workHistory.removeAt(index)),
+                                onPressed: () => setState(() => _experience.removeAt(index)),
                               ),
                             ),
                           );
@@ -166,7 +172,7 @@ class _WorkHistoryScreenState extends State<WorkHistoryScreen> {
                       backgroundColor: const Color(0xFF0F3A40),
                       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
                     ),
-                    child: const Text("Save History", style: TextStyle(fontSize: 18, color: Colors.white, fontWeight: FontWeight.bold)),
+                    child: const Text("Save Experience", style: TextStyle(fontSize: 18, color: Colors.white, fontWeight: FontWeight.bold)),
                   ),
                 ),
               ],

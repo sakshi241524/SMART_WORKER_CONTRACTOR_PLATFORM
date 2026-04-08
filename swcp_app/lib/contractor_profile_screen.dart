@@ -1,24 +1,22 @@
 import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
-import 'profile_sections/personal_info_screen.dart';
+import 'profile_sections/contractor_personal_info_screen.dart';
 import 'profile_sections/skills_certificates_screen.dart';
-import 'profile_sections/work_history_screen.dart';
+import 'profile_sections/contractor_experience_screen.dart';
 import 'profile_sections/account_settings_screen.dart';
 import 'profile_sections/help_support_screen.dart';
 
-class WorkerProfileScreen extends StatefulWidget {
-  const WorkerProfileScreen({super.key});
+class ContractorProfileScreen extends StatefulWidget {
+  const ContractorProfileScreen({super.key});
 
   @override
-  State<WorkerProfileScreen> createState() => _WorkerProfileScreenState();
+  State<ContractorProfileScreen> createState() => _ContractorProfileScreenState();
 }
 
-class _WorkerProfileScreenState extends State<WorkerProfileScreen> {
+class _ContractorProfileScreenState extends State<ContractorProfileScreen> {
   String _name = "...";
   String _email = "...";
-  double _rating = 4.9;
-  int _reviewsCount = 42;
 
   @override
   void initState() {
@@ -32,10 +30,11 @@ class _WorkerProfileScreenState extends State<WorkerProfileScreen> {
       _email = user.email ?? "...";
       final doc = await FirebaseFirestore.instance.collection('users').doc(user.uid).get();
       if (doc.exists) {
-        setState(() {
-          _name = doc.get('name') ?? "Worker Name";
-          // Rating and reviews could also be fetched here
-        });
+        if (mounted) {
+          setState(() {
+            _name = doc.get('name') ?? "Contractor Name";
+          });
+        }
       }
     }
   }
@@ -53,8 +52,11 @@ class _WorkerProfileScreenState extends State<WorkerProfileScreen> {
               children: [
                 CircleAvatar(
                   radius: 45,
-                  backgroundColor: Colors.blue.shade100,
-                  child: const Icon(Icons.person, size: 50, color: Colors.blue),
+                  backgroundColor: const Color(0xFF0F3A40).withOpacity(0.1),
+                  child: Text(
+                    _name.isNotEmpty ? _name[0].toUpperCase() : "C",
+                    style: const TextStyle(fontSize: 40, fontWeight: FontWeight.bold, color: Color(0xFF0F3A40)),
+                  ),
                 ),
                 const SizedBox(width: 20),
                 Expanded(
@@ -63,22 +65,16 @@ class _WorkerProfileScreenState extends State<WorkerProfileScreen> {
                     children: [
                       Text(
                         _name,
-                        style: const TextStyle(fontSize: 24, fontWeight: FontWeight.bold),
+                        style: const TextStyle(fontSize: 24, fontWeight: FontWeight.bold, color: Color(0xFF0F3A40)),
                       ),
                       Text(
                         _email,
                         style: TextStyle(color: Colors.grey.shade600, fontSize: 16),
                       ),
                       const SizedBox(height: 5),
-                      Row(
-                        children: [
-                          const Icon(Icons.star, color: Colors.amber, size: 20),
-                          const SizedBox(width: 5),
-                          Text(
-                            "$_rating ($_reviewsCount reviews)",
-                            style: const TextStyle(fontWeight: FontWeight.w500),
-                          ),
-                        ],
+                      const Chip(
+                        label: Text("CONTRACTOR", style: TextStyle(fontSize: 10, color: Colors.white, fontWeight: FontWeight.bold)),
+                        backgroundColor: Color(0xFFA5555A),
                       ),
                     ],
                   ),
@@ -93,13 +89,13 @@ class _WorkerProfileScreenState extends State<WorkerProfileScreen> {
             icon: Icons.person_outline,
             title: "Personal Information",
             onTap: () async {
-              final result = await Navigator.push(context, MaterialPageRoute(builder: (context) => const PersonalInfoScreen()));
+              final result = await Navigator.push(context, MaterialPageRoute(builder: (context) => const ContractorPersonalInfoScreen()));
               if (result == true) _fetchUserData();
             },
           ),
           _buildMenuItem(
             icon: Icons.card_membership_outlined,
-            title: "My Skills & Certificates",
+            title: "Skills & Certificates",
             onTap: () async {
               final result = await Navigator.push(context, MaterialPageRoute(builder: (context) => const SkillsCertificatesScreen()));
               if (result == true) _fetchUserData();
@@ -107,9 +103,9 @@ class _WorkerProfileScreenState extends State<WorkerProfileScreen> {
           ),
           _buildMenuItem(
             icon: Icons.history_outlined,
-            title: "Work History",
+            title: "Work Experience",
             onTap: () async {
-              final result = await Navigator.push(context, MaterialPageRoute(builder: (context) => const WorkHistoryScreen()));
+              final result = await Navigator.push(context, MaterialPageRoute(builder: (context) => const ContractorExperienceScreen()));
               if (result == true) _fetchUserData();
             },
           ),
@@ -129,9 +125,22 @@ class _WorkerProfileScreenState extends State<WorkerProfileScreen> {
             padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
             child: OutlinedButton(
               onPressed: () async {
-                await FirebaseAuth.instance.signOut();
-                if (mounted) {
-                  Navigator.of(context).pushNamedAndRemoveUntil('/', (route) => false);
+                final confirm = await showDialog<bool>(
+                  context: context,
+                  builder: (context) => AlertDialog(
+                    title: const Text("Log Out"),
+                    content: const Text("Are you sure you want to log out?"),
+                    actions: [
+                      TextButton(onPressed: () => Navigator.pop(context, false), child: const Text("Cancel")),
+                      TextButton(onPressed: () => Navigator.pop(context, true), child: const Text("Log Out", style: TextStyle(color: Colors.red))),
+                    ],
+                  ),
+                );
+                if (confirm == true) {
+                  await FirebaseAuth.instance.signOut();
+                  if (mounted) {
+                    Navigator.of(context).pushNamedAndRemoveUntil('/', (route) => false);
+                  }
                 }
               },
               style: OutlinedButton.styleFrom(
@@ -167,7 +176,7 @@ class _WorkerProfileScreenState extends State<WorkerProfileScreen> {
         ),
         child: Row(
           children: [
-            Icon(icon, size: 28, color: Colors.grey.shade700),
+            Icon(icon, size: 28, color: const Color(0xFF0F3A40).withOpacity(0.7)),
             const SizedBox(width: 20),
             Text(
               title,

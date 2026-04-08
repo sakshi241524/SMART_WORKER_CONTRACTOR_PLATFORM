@@ -32,6 +32,8 @@ class _SkillsCertificatesScreenState extends State<SkillsCertificatesScreen> {
       if (doc.exists) {
         final data = doc.data() as Map<String, dynamic>;
         setState(() {
+          _mySkills.clear();
+          _certificates.clear();
           if (data['skills'] != null) _mySkills.addAll(List<String>.from(data['skills']));
           if (data['certificates'] != null) _certificates.addAll(List<String>.from(data['certificates']));
         });
@@ -61,19 +63,30 @@ class _SkillsCertificatesScreenState extends State<SkillsCertificatesScreen> {
 
   Future<void> _saveData() async {
     setState(() => _isLoading = true);
-    final user = FirebaseAuth.instance.currentUser;
-    if (user != null) {
-      await FirebaseFirestore.instance.collection('users').doc(user.uid).set({
-        'skills': _mySkills,
-        'certificates': _certificates,
-      }, SetOptions(merge: true));
-      
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Skills and Certificates saved!")));
-        Navigator.pop(context);
+    try {
+      final user = FirebaseAuth.instance.currentUser;
+      if (user != null) {
+        await FirebaseFirestore.instance.collection('users').doc(user.uid).set({
+          'skills': _mySkills,
+          'certificates': _certificates,
+        }, SetOptions(merge: true));
+        
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text("Skills and Certificates saved!"), backgroundColor: Colors.green),
+          );
+          Navigator.pop(context, true);
+        }
       }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text("Error saving skills: $e"), backgroundColor: Colors.red),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _isLoading = false);
     }
-    if (mounted) setState(() => _isLoading = false);
   }
 
   @override

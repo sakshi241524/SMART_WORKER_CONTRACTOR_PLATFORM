@@ -3,15 +3,16 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:geocoding/geocoding.dart';
+import 'package:url_launcher/url_launcher.dart';
 
-class PersonalInfoScreen extends StatefulWidget {
-  const PersonalInfoScreen({super.key});
+class ContractorPersonalInfoScreen extends StatefulWidget {
+  const ContractorPersonalInfoScreen({super.key});
 
   @override
-  State<PersonalInfoScreen> createState() => _PersonalInfoScreenState();
+  State<ContractorPersonalInfoScreen> createState() => _ContractorPersonalInfoScreenState();
 }
 
-class _PersonalInfoScreenState extends State<PersonalInfoScreen> {
+class _ContractorPersonalInfoScreenState extends State<ContractorPersonalInfoScreen> {
   final _formKey = GlobalKey<FormState>();
   
   String _name = "...";
@@ -20,7 +21,7 @@ class _PersonalInfoScreenState extends State<PersonalInfoScreen> {
   final TextEditingController _addressController = TextEditingController();
   final TextEditingController _educationController = TextEditingController();
   final TextEditingController _dobController = TextEditingController();
-  final TextEditingController _localAddrController = TextEditingController();
+  final TextEditingController _tempAddrController = TextEditingController();
   final TextEditingController _permAddrController = TextEditingController();
 
   bool _isLoading = false;
@@ -45,7 +46,7 @@ class _PersonalInfoScreenState extends State<PersonalInfoScreen> {
         _addressController.text = data['address'] ?? "";
         _educationController.text = data['education'] ?? "";
         _dobController.text = data['dob'] ?? "";
-        _localAddrController.text = data['local_address'] ?? "";
+        _tempAddrController.text = data['temp_address'] ?? "";
         _permAddrController.text = data['permanent_address'] ?? "";
         if (data['latitude'] != null && data['longitude'] != null) {
           _currentPosition = Position(
@@ -66,6 +67,37 @@ class _PersonalInfoScreenState extends State<PersonalInfoScreen> {
     if (mounted) setState(() => _isLoading = false);
   }
 
+  Future<void> _selectDate(BuildContext context) async {
+    final DateTime? picked = await showDatePicker(
+      context: context,
+      initialDate: DateTime.now().subtract(const Duration(days: 365 * 25)),
+      firstDate: DateTime(1900),
+      lastDate: DateTime.now(),
+    );
+    if (picked != null) {
+      setState(() {
+        _dobController.text = "${picked.day}/${picked.month}/${picked.year}";
+      });
+    }
+  }
+
+  Future<void> _openMap() async {
+    final address = _addressController.text.trim();
+    if (address.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Please enter an address first")));
+      return;
+    }
+    final query = Uri.encodeComponent(address);
+    final googleMapsUrl = "https://www.google.com/maps/search/?api=1&query=$query";
+    final uri = Uri.parse(googleMapsUrl);
+    
+    if (await canLaunchUrl(uri)) {
+      await launchUrl(uri);
+    } else {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Could not launch Maps app")));
+    }
+  }
+
   Future<void> _getCurrentLocation() async {
     setState(() => _isLoading = true);
     try {
@@ -80,9 +112,9 @@ class _PersonalInfoScreenState extends State<PersonalInfoScreen> {
         List<Placemark> placemarks = await placemarkFromCoordinates(position.latitude, position.longitude);
         if (placemarks.isNotEmpty) {
           Placemark place = placemarks[0];
-          String address = "${place.street}, ${place.subLocality}, ${place.locality}, ${place.postalCode}, ${place.country}";
+          String addr = "${place.street}, ${place.subLocality}, ${place.locality}, ${place.postalCode}, ${place.country}";
           setState(() {
-            _addressController.text = address;
+            _addressController.text = addr;
           });
         }
       }
@@ -103,7 +135,7 @@ class _PersonalInfoScreenState extends State<PersonalInfoScreen> {
             'address': _addressController.text.trim(),
             'education': _educationController.text.trim(),
             'dob': _dobController.text.trim(),
-            'local_address': _localAddrController.text.trim(),
+            'temp_address': _tempAddrController.text.trim(),
             'permanent_address': _permAddrController.text.trim(),
             'latitude': _currentPosition?.latitude,
             'longitude': _currentPosition?.longitude,
@@ -113,7 +145,7 @@ class _PersonalInfoScreenState extends State<PersonalInfoScreen> {
             ScaffoldMessenger.of(context).showSnackBar(
               const SnackBar(content: Text("Profile updated successfully"), backgroundColor: Colors.green),
             );
-            Navigator.pop(context, true); // Return true to indicate update
+            Navigator.pop(context, true);
           }
         }
       } catch (e) {
@@ -134,7 +166,7 @@ class _PersonalInfoScreenState extends State<PersonalInfoScreen> {
       appBar: AppBar(
         title: const Text("Personal Information", style: TextStyle(fontWeight: FontWeight.bold)),
         backgroundColor: Colors.white,
-        foregroundColor: Colors.black,
+        foregroundColor: const Color(0xFF0F3A40),
         elevation: 0,
       ),
       body: _isLoading 
@@ -146,11 +178,11 @@ class _PersonalInfoScreenState extends State<PersonalInfoScreen> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  _buildReadOnlyField("Name", _name),
+                  _buildReadOnlyField("Full Name", _name),
                   const SizedBox(height: 15),
-                  _buildReadOnlyField("Email", _email),
+                  _buildReadOnlyField("Email Address", _email),
                   const SizedBox(height: 25),
-                  const Text("Editable Information", style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Colors.blueGrey)),
+                  const Text("Contractor Profile Details", style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Color(0xFF0F3A40))),
                   const SizedBox(height: 15),
                   _buildTextField("Phone Number", _phoneController, Icons.phone, keyboardType: TextInputType.phone),
                   const SizedBox(height: 15),
@@ -158,11 +190,11 @@ class _PersonalInfoScreenState extends State<PersonalInfoScreen> {
                   const SizedBox(height: 15),
                   _buildTextField("Education", _educationController, Icons.school),
                   const SizedBox(height: 15),
-                  _buildTextField("Birth Date", _dobController, Icons.calendar_today, hint: "DD/MM/YYYY"),
+                  _buildDatePickerField(),
                   const SizedBox(height: 15),
-                  _buildTextField("Local Address", _localAddrController, Icons.home_outlined),
+                  _buildTextField("Temporary Address", _tempAddrController, Icons.home_outlined, maxLines: 2),
                   const SizedBox(height: 15),
-                  _buildTextField("Permanent Address", _permAddrController, Icons.location_on_outlined),
+                  _buildTextField("Permanent Address", _permAddrController, Icons.location_on_outlined, maxLines: 2),
                   const SizedBox(height: 30),
                   SizedBox(
                     width: double.infinity,
@@ -173,7 +205,7 @@ class _PersonalInfoScreenState extends State<PersonalInfoScreen> {
                         backgroundColor: const Color(0xFF0F3A40),
                         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
                       ),
-                      child: const Text("Save Information", style: TextStyle(fontSize: 18, color: Colors.white, fontWeight: FontWeight.bold)),
+                      child: const Text("Save Changes", style: TextStyle(fontSize: 18, color: Colors.white, fontWeight: FontWeight.bold)),
                     ),
                   ),
                   const SizedBox(height: 20),
@@ -198,19 +230,19 @@ class _PersonalInfoScreenState extends State<PersonalInfoScreen> {
             borderRadius: BorderRadius.circular(12),
             border: Border.all(color: Colors.grey.shade300),
           ),
-          child: Text(value, style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w600, color: Colors.black54)),
+          child: Text(value, style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w600, color: Color(0xFF0F3A40))),
         ),
       ],
     );
   }
 
-  Widget _buildTextField(String label, TextEditingController controller, IconData icon, {TextInputType? keyboardType, String? hint}) {
+  Widget _buildTextField(String label, TextEditingController controller, IconData icon, {TextInputType? keyboardType, int maxLines = 1}) {
     return TextFormField(
       controller: controller,
       keyboardType: keyboardType,
+      maxLines: maxLines,
       decoration: InputDecoration(
         labelText: label,
-        hintText: hint,
         prefixIcon: Icon(icon, color: const Color(0xFF0F3A40)),
         border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
         filled: true,
@@ -223,6 +255,28 @@ class _PersonalInfoScreenState extends State<PersonalInfoScreen> {
     );
   }
 
+  Widget _buildDatePickerField() {
+    return InkWell(
+      onTap: () => _selectDate(context),
+      child: IgnorePointer(
+        child: TextFormField(
+          controller: _dobController,
+          decoration: InputDecoration(
+            labelText: "Birth Date",
+            prefixIcon: const Icon(Icons.calendar_month, color: Color(0xFF0F3A40)),
+            border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+            filled: true,
+            fillColor: Colors.white,
+          ),
+          validator: (value) {
+            if (value == null || value.isEmpty) return "Please select Birth Date";
+            return null;
+          },
+        ),
+      ),
+    );
+  }
+
   Widget _buildAddressField() {
     return Column(
       children: [
@@ -232,10 +286,20 @@ class _PersonalInfoScreenState extends State<PersonalInfoScreen> {
           decoration: InputDecoration(
             labelText: "Address",
             prefixIcon: const Icon(Icons.map_outlined, color: Color(0xFF0F3A40)),
-            suffixIcon: IconButton(
-              icon: const Icon(Icons.my_location, color: Colors.blue),
-              onPressed: _getCurrentLocation,
-              tooltip: "Use current location",
+            suffixIcon: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                IconButton(
+                  icon: const Icon(Icons.my_location, color: Colors.blue),
+                  onPressed: _getCurrentLocation,
+                  tooltip: "Fetch current location",
+                ),
+                IconButton(
+                  icon: const Icon(Icons.open_in_new, color: Colors.green),
+                  onPressed: _openMap,
+                  tooltip: "View on Map",
+                ),
+              ],
             ),
             border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
             filled: true,
@@ -247,7 +311,7 @@ class _PersonalInfoScreenState extends State<PersonalInfoScreen> {
           },
         ),
         const SizedBox(height: 5),
-        const Text("Tap the GPS icon to fetch address automatically using Maps API", style: TextStyle(fontSize: 12, color: Colors.blueGrey, fontStyle: FontStyle.italic)),
+        const Text("Use GPS icon to fetch address, or Map icon to visualize it", style: TextStyle(fontSize: 12, color: Colors.blueGrey, fontStyle: FontStyle.italic)),
       ],
     );
   }

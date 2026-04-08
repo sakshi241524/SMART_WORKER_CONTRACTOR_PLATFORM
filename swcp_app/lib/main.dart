@@ -8,9 +8,17 @@ import 'app_state.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  await Firebase.initializeApp(
-    options: DefaultFirebaseOptions.currentPlatform,
-  );
+  
+  debugPrint("SWCP App: Initializing Firebase...");
+  try {
+    await Firebase.initializeApp(
+      options: DefaultFirebaseOptions.currentPlatform,
+    );
+    debugPrint("SWCP App: Firebase initialized successfully");
+  } catch (e) {
+    debugPrint("SWCP App: Firebase initialization error: $e");
+  }
+
   runApp(
     ChangeNotifierProvider(
       create: (context) => AppState(),

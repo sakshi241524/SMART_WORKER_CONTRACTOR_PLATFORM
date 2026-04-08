@@ -51,8 +51,8 @@ class DefaultFirebaseOptions {
   );
 
   static const FirebaseOptions android = FirebaseOptions(
-    apiKey: 'AIzaSyBXbsgqs07nR10ziwLVuR18I-Xkw9A1E_E',
-    appId: '1:301809525698:android:0b18b7176faa2447abec5b', // Placeholder appId for Android
+    apiKey: 'AIzaSyBYiPXPtleQ2A-OXX964qrdxh2VzDd1K30',
+    appId: '1:301809525698:android:743aefd0f9aa2890abec5b',
     messagingSenderId: '301809525698',
     projectId: 'swcp-app-91b5c',
     storageBucket: 'swcp-app-91b5c.firebasestorage.app',

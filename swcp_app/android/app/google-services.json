@@ -1,0 +1,39 @@
+{
+  "project_info": {
+    "project_number": "301809525698",
+    "project_id": "swcp-app-91b5c",
+    "storage_bucket": "swcp-app-91b5c.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:301809525698:android:743aefd0f9aa2890abec5b",
+        "android_client_info": {
+          "package_name": "com.example.swcp_app"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "301809525698-55i3ro48qodgj34vi5f59iena9e2lhdj.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyBYiPXPtleQ2A-OXX964qrdxh2VzDd1K30"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "301809525698-55i3ro48qodgj34vi5f59iena9e2lhdj.apps.googleusercontent.com",
+              "client_type": 3
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
