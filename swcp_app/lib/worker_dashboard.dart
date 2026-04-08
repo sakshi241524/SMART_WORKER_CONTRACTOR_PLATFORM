@@ -1,3 +1,6 @@
+import 'package:flutter/material.dart';
+import 'package:firebase_auth/firebase_auth.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'worker_profile_screen.dart';
 
 class WorkerDashboard extends StatefulWidget {
@@ -29,11 +32,14 @@ class _WorkerDashboardState extends State<WorkerDashboard> {
     }
   }
 
-  static const List<Widget> _widgetOptions = <Widget>[
-    Center(child: Text('Home Content', style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold))),
-    Center(child: Text('Notifications Content', style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold))),
-    WorkerProfileScreen(),
-  ];
+  String _getAppBarTitle() {
+    switch (_selectedIndex) {
+      case 0: return "Home";
+      case 1: return "Notifications";
+      case 2: return "Profile";
+      default: return "Worker Dashboard";
+    }
+  }
 
   void _onItemTapped(int index) {
     setState(() {
@@ -43,10 +49,22 @@ class _WorkerDashboardState extends State<WorkerDashboard> {
 
   @override
   Widget build(BuildContext context) {
+    List<Widget> widgetOptions = <Widget>[
+      const Center(child: Text('Home Content', style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold))),
+      const Center(child: Text('Notifications Content', style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold))),
+      const WorkerProfileScreen(),
+    ];
+
     return Scaffold(
       backgroundColor: const Color(0xFFFBFBFC),
       appBar: AppBar(
-        title: Text('Hi $_userName', style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 22, color: Color(0xFF0F3A40))),
+        title: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text('Hi $_userName', style: const TextStyle(fontSize: 14, color: Colors.grey)),
+            Text(_getAppBarTitle(), style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 22, color: Color(0xFF0F3A40))),
+          ],
+        ),
         backgroundColor: Colors.white,
         elevation: 0,
         actions: [
@@ -61,7 +79,7 @@ class _WorkerDashboardState extends State<WorkerDashboard> {
           ),
         ],
       ),
-      body: _widgetOptions.elementAt(_selectedIndex),
+      body: widgetOptions.elementAt(_selectedIndex),
       bottomNavigationBar: BottomNavigationBar(
         items: const <BottomNavigationBarItem>[
           BottomNavigationBarItem(
