@@ -15,6 +15,7 @@ class JobDetailsWorkerScreen extends StatefulWidget {
 
 class _JobDetailsWorkerScreenState extends State<JobDetailsWorkerScreen> {
   bool _isAccepting = false;
+  bool _isRejecting = false;
   String? _selectedProfession;
 
   Future<void> _acceptJob() async {
@@ -98,8 +99,58 @@ class _JobDetailsWorkerScreenState extends State<JobDetailsWorkerScreen> {
     }
   }
 
+  Future<void> _rejectJob() async {
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Reject Job?'),
+        content: const Text('This job will be permanently removed from your list.'),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Cancel')),
+          TextButton(onPressed: () => Navigator.pop(context, true), child: const Text('Reject', style: TextStyle(color: Colors.red))),
+        ],
+      ),
+    );
+
+    if (confirm != true) return;
+
+    final uid = FirebaseAuth.instance.currentUser?.uid;
+    if (uid == null) return;
+
+    setState(() => _isRejecting = true);
+
+    try {
+      await FirebaseFirestore.instance.collection('jobs').doc(widget.jobId).update({
+        'rejectedBy': FieldValue.arrayUnion([uid]),
+      });
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Job rejected')),
+        );
+        Navigator.pop(context);
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Error: $e'), backgroundColor: Colors.red),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _isRejecting = false);
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
+    final uid = FirebaseAuth.instance.currentUser?.uid;
+    final Map<String, dynamic> acceptedBy = widget.jobData['acceptedWorkers'] ?? {};
+    
+    bool alreadyJoined = false;
+    acceptedBy.values.forEach((list) {
+      if ((list as List).contains(uid)) alreadyJoined = true;
+    });
+
     final requiredWorkers = Map<String, int>.from(widget.jobData['requiredWorkers'] ?? {});
     final date = (widget.jobData['date'] as Timestamp).toDate();
 
@@ -127,6 +178,26 @@ class _JobDetailsWorkerScreenState extends State<JobDetailsWorkerScreen> {
                     style: const TextStyle(fontSize: 16, color: Colors.grey)),
               ],
             ),
+            if (widget.jobData['targetWorkerId'] != null) ...[
+              const SizedBox(height: 16),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                decoration: BoxDecoration(
+                  color: Colors.amber.shade100,
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(color: Colors.amber.shade300),
+                ),
+                child: const Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(Icons.star, color: Colors.orange, size: 18),
+                    SizedBox(width: 8),
+                    Text('DIRECT OFFER FOR YOU', 
+                      style: TextStyle(color: Colors.orange, fontWeight: FontWeight.bold, fontSize: 13)),
+                  ],
+                ),
+              ),
+            ],
             const Divider(height: 48),
             
             _buildInfoSection(Icons.calendar_today_outlined, 'Date', DateFormat('EEEE, MMM dd, yyyy').format(date)),
@@ -162,35 +233,62 @@ class _JobDetailsWorkerScreenState extends State<JobDetailsWorkerScreen> {
             }).toList(),
             
             const SizedBox(height: 48),
-            Row(
-              children: [
-                Expanded(
-                  child: OutlinedButton(
-                    onPressed: () => Navigator.pop(context),
-                    style: OutlinedButton.styleFrom(
-                      padding: const EdgeInsets.symmetric(vertical: 16),
-                      side: const BorderSide(color: Colors.red),
-                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                    ),
-                    child: const Text('Reject', style: TextStyle(color: Colors.red, fontSize: 18)),
-                  ),
+            if (alreadyJoined)
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.all(16),
+                decoration: BoxDecoration(
+                  color: Colors.green.withOpacity(0.1),
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(color: Colors.green.withOpacity(0.3)),
                 ),
-                const SizedBox(width: 16),
-                Expanded(
-                  child: ElevatedButton(
-                    onPressed: _isAccepting ? null : _acceptJob,
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: const Color(0xFF0F3A40),
-                      padding: const EdgeInsets.symmetric(vertical: 16),
-                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                child: const Column(
+                  children: [
+                    Icon(Icons.check_circle, color: Colors.green, size: 32),
+                    SizedBox(height: 12),
+                    Text(
+                      'YOU HAVE JOINED THIS JOB',
+                      style: TextStyle(color: Colors.green, fontWeight: FontWeight.bold, fontSize: 18),
                     ),
-                    child: _isAccepting 
-                      ? const CircularProgressIndicator(color: Colors.white)
-                      : const Text('Accept', style: TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold)),
-                  ),
+                    Text(
+                      'The contractor will contact you soon.',
+                      style: TextStyle(color: Colors.green, fontSize: 13),
+                    ),
+                  ],
                 ),
-              ],
-            ),
+              )
+            else
+              Row(
+                children: [
+                  Expanded(
+                    child: OutlinedButton(
+                      onPressed: _isRejecting ? null : _rejectJob,
+                      style: OutlinedButton.styleFrom(
+                        padding: const EdgeInsets.symmetric(vertical: 16),
+                        side: const BorderSide(color: Colors.red),
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                      ),
+                      child: _isRejecting 
+                        ? const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.red))
+                        : const Text('Reject', style: TextStyle(color: Colors.red, fontSize: 18)),
+                    ),
+                  ),
+                  const SizedBox(width: 16),
+                  Expanded(
+                    child: ElevatedButton(
+                      onPressed: _isAccepting ? null : _acceptJob,
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: const Color(0xFF0F3A40),
+                        padding: const EdgeInsets.symmetric(vertical: 16),
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                      ),
+                      child: _isAccepting 
+                        ? const CircularProgressIndicator(color: Colors.white)
+                        : const Text('Accept', style: TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold)),
+                    ),
+                  ),
+                ],
+              ),
             const SizedBox(height: 40),
           ],
         ),

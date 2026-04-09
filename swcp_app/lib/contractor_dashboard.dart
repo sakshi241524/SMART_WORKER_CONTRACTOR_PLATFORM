@@ -7,25 +7,32 @@ import 'send_message_screen.dart';
 import 'post_job_screen.dart';
 import 'worker_details_screen.dart';
 import 'contractor_profile_screen.dart';
+import 'direct_post_job_screen.dart';
+import 'role_selection_screen.dart';
+import 'package:provider/provider.dart';
+import 'app_state.dart';
+import 'app_state.dart';
 
 class ContractorDashboard extends StatefulWidget {
-  const ContractorDashboard({super.key});
+  final int initialIndex;
+  const ContractorDashboard({super.key, this.initialIndex = 0});
 
   @override
   State<ContractorDashboard> createState() => _ContractorDashboardState();
 }
 
 class _ContractorDashboardState extends State<ContractorDashboard> {
-  int _selectedIndex = 0;
-  String _userName = "...";
-  double? _contractorLat;
-  double? _contractorLng;
+  late int _selectedIndex;
 
   @override
   void initState() {
     super.initState();
+    _selectedIndex = widget.initialIndex;
     _fetchUserName();
   }
+  String _userName = "...";
+  double? _contractorLat;
+  double? _contractorLng;
 
   Future<void> _fetchUserName() async {
     final uid = FirebaseAuth.instance.currentUser?.uid;
@@ -45,6 +52,8 @@ class _ContractorDashboardState extends State<ContractorDashboard> {
     setState(() {
       _selectedIndex = index;
     });
+    // Persist the last active index
+    Provider.of<AppState>(context, listen: false).setLastDashboardIndex(index);
   }
 
   Widget _buildHomeView() {
@@ -373,7 +382,12 @@ class _ContractorDashboardState extends State<ContractorDashboard> {
                         Expanded(
                           child: ElevatedButton(
                             onPressed: () {
-                              Navigator.push(context, MaterialPageRoute(builder: (context) => const PostJobScreen()));
+                              Navigator.push(
+                                context, 
+                                MaterialPageRoute(
+                                  builder: (context) => DirectPostJobScreen(workerData: data)
+                                )
+                              );
                             },
                             style: ElevatedButton.styleFrom(
                               backgroundColor: const Color(0xFF0F3A40),
@@ -744,7 +758,7 @@ class _ContractorDashboardState extends State<ContractorDashboard> {
       },
     );
   }
-
+  
   Widget _buildProfileView() {
     return const ContractorProfileScreen();
   }
@@ -755,71 +769,89 @@ class _ContractorDashboardState extends State<ContractorDashboard> {
       _buildHomeView(),
       _buildWorkersListView(),
       _buildJobsListView(),
-      _buildAlertsView(), // New index 3
-      _buildProfileView(), // New index 4
+      _buildAlertsView(),
+      _buildProfileView(),
     ];
 
-    return Scaffold(
-      backgroundColor: const Color(0xFFFBFBFC),
-      appBar: AppBar(
-        title: Text(
-          'Hi $_userName', 
-          style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 22, color: Color(0xFF0F3A40)),
-          overflow: TextOverflow.ellipsis,
-        ),
-        backgroundColor: Colors.white,
-        elevation: 0,
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.notifications_none_outlined, color: Color(0xFF0F3A40)),
-            onPressed: () => setState(() => _selectedIndex = 3),
-          ),
-          IconButton(
-            icon: const Icon(Icons.logout, color: Color(0xFF0F3A40)),
-            onPressed: () async {
-              await FirebaseAuth.instance.signOut();
-              if (mounted) {
-                Navigator.of(context).pushNamedAndRemoveUntil('/', (route) => false);
+    return WillPopScope(
+      onWillPop: () async {
+        if (_selectedIndex != 0) {
+          setState(() => _selectedIndex = 0);
+          return false;
+        } else {
+          Navigator.of(context).pushAndRemoveUntil(
+            MaterialPageRoute(builder: (context) => const RoleSelectionScreen()),
+            (route) => false,
+          );
+          return false;
+        }
+      },
+      child: Scaffold(
+        backgroundColor: const Color(0xFFFBFBFC),
+        appBar: AppBar(
+          leading: IconButton(
+            icon: const Icon(Icons.arrow_back, color: Color(0xFF0F3A40)),
+            onPressed: () {
+              if (_selectedIndex != 0) {
+                setState(() => _selectedIndex = 0);
+              } else {
+                Navigator.of(context).pushAndRemoveUntil(
+                  MaterialPageRoute(builder: (context) => const RoleSelectionScreen()),
+                  (route) => false,
+                );
               }
             },
           ),
-        ],
-      ),
-      body: widgetOptions.elementAt(_selectedIndex),
-      bottomNavigationBar: BottomNavigationBar(
-        items: const <BottomNavigationBarItem>[
-          BottomNavigationBarItem(
-            icon: Icon(Icons.home_outlined),
-            activeIcon: Icon(Icons.home),
-            label: 'Home',
+          title: Text(
+            'Hi $_userName',
+            style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 22, color: Color(0xFF0F3A40)),
+            overflow: TextOverflow.ellipsis,
           ),
-          BottomNavigationBarItem(
-            icon: Icon(Icons.people_outlined),
-            activeIcon: Icon(Icons.people),
-            label: 'Workers',
-          ),
-          BottomNavigationBarItem(
-            icon: Icon(Icons.assignment_outlined),
-            activeIcon: Icon(Icons.assignment),
-            label: 'Jobs',
-          ),
-          BottomNavigationBarItem(
-            icon: Icon(Icons.notifications_outlined),
-            activeIcon: Icon(Icons.notifications),
-            label: 'Alerts',
-          ),
-          BottomNavigationBarItem(
-            icon: Icon(Icons.person_outline),
-            activeIcon: Icon(Icons.person),
-            label: 'Profile',
-          ),
-        ],
-        currentIndex: _selectedIndex,
-        selectedItemColor: const Color(0xFFA5555A),
-        onTap: _onItemTapped,
-        unselectedItemColor: Colors.grey,
-        showUnselectedLabels: true,
-        type: BottomNavigationBarType.fixed,
+          backgroundColor: Colors.white,
+          elevation: 0,
+          actions: [
+            IconButton(
+              icon: const Icon(Icons.notifications_none_outlined, color: Color(0xFF0F3A40)),
+              onPressed: () => setState(() => _selectedIndex = 3),
+            ),
+          ],
+        ),
+        body: widgetOptions.elementAt(_selectedIndex),
+        bottomNavigationBar: BottomNavigationBar(
+          items: <BottomNavigationBarItem>[
+            BottomNavigationBarItem(
+              icon: const Icon(Icons.home_outlined),
+              activeIcon: const Icon(Icons.home),
+              label: 'Home',
+            ),
+            BottomNavigationBarItem(
+              icon: const Icon(Icons.people_outlined),
+              activeIcon: const Icon(Icons.people),
+              label: 'Workers',
+            ),
+            BottomNavigationBarItem(
+              icon: const Icon(Icons.assignment_outlined),
+              activeIcon: const Icon(Icons.assignment),
+              label: 'Jobs',
+            ),
+            BottomNavigationBarItem(
+              icon: const Icon(Icons.notifications_outlined),
+              activeIcon: const Icon(Icons.notifications),
+              label: 'Alerts',
+            ),
+            BottomNavigationBarItem(
+              icon: const Icon(Icons.person_outline),
+              activeIcon: const Icon(Icons.person),
+              label: 'Profile',
+            ),
+          ],
+          currentIndex: _selectedIndex,
+          selectedItemColor: const Color(0xFFA5555A),
+          onTap: _onItemTapped,
+          unselectedItemColor: Colors.grey,
+          showUnselectedLabels: true,
+          type: BottomNavigationBarType.fixed,
+        ),
       ),
     );
   }

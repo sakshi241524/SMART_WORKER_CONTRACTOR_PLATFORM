@@ -5,7 +5,8 @@ import 'package:image_picker/image_picker.dart';
 import 'dart:io';
 
 class SkillsCertificatesScreen extends StatefulWidget {
-  const SkillsCertificatesScreen({super.key});
+  final bool showSkills;
+  const SkillsCertificatesScreen({super.key, this.showSkills = true});
 
   @override
   State<SkillsCertificatesScreen> createState() => _SkillsCertificatesScreenState();
@@ -72,8 +73,9 @@ class _SkillsCertificatesScreenState extends State<SkillsCertificatesScreen> {
         }, SetOptions(merge: true));
         
         if (mounted) {
+          String message = widget.showSkills ? "Skills and Certificates saved!" : "Certificates saved!";
           ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text("Skills and Certificates saved!"), backgroundColor: Colors.green),
+            SnackBar(content: Text(message), backgroundColor: Colors.green),
           );
           Navigator.pop(context, true);
         }
@@ -93,7 +95,7 @@ class _SkillsCertificatesScreenState extends State<SkillsCertificatesScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text("Skills & Certificates", style: TextStyle(fontWeight: FontWeight.bold)),
+        title: Text(widget.showSkills ? "Skills & Certificates" : "Certificates", style: const TextStyle(fontWeight: FontWeight.bold)),
         backgroundColor: Colors.white,
         foregroundColor: Colors.black,
         elevation: 0,
@@ -105,33 +107,35 @@ class _SkillsCertificatesScreenState extends State<SkillsCertificatesScreen> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                const Text("My Skills", style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
-                const SizedBox(height: 10),
-                Wrap(
-                  spacing: 8,
-                  runSpacing: 8,
-                  children: _mySkills.isEmpty 
-                    ? [const Text("No skills added yet.", style: TextStyle(color: Colors.grey, fontStyle: FontStyle.italic))]
-                    : _mySkills.map((skill) => Chip(
-                        label: Text(skill),
-                        onDeleted: () => _removeSkill(skill),
-                        backgroundColor: Colors.blue.shade50,
-                        deleteIconColor: Colors.red,
-                      )).toList(),
-                ),
-                const SizedBox(height: 25),
-                const Text("Suggested Skills", style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600, color: Colors.blueGrey)),
-                const SizedBox(height: 10),
-                Wrap(
-                  spacing: 8,
-                  runSpacing: 8,
-                  children: _suggestedSkills.where((s) => !_mySkills.contains(s)).map((skill) => ActionChip(
-                    label: Text(skill),
-                    onPressed: () => _addSkill(skill),
-                    backgroundColor: Colors.grey.shade100,
-                  )).toList(),
-                ),
-                const SizedBox(height: 40),
+                if (widget.showSkills) ...[
+                  const Text("My Skills", style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
+                  const SizedBox(height: 10),
+                  Wrap(
+                    spacing: 8,
+                    runSpacing: 8,
+                    children: _mySkills.isEmpty 
+                      ? [const Text("No skills added yet.", style: TextStyle(color: Colors.grey, fontStyle: FontStyle.italic))]
+                      : _mySkills.map((skill) => Chip(
+                          label: Text(skill),
+                          onDeleted: () => _removeSkill(skill),
+                          backgroundColor: Colors.blue.shade50,
+                          deleteIconColor: Colors.red,
+                        )).toList(),
+                  ),
+                  const SizedBox(height: 25),
+                  const Text("Suggested Skills", style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600, color: Colors.blueGrey)),
+                  const SizedBox(height: 10),
+                  Wrap(
+                    spacing: 8,
+                    runSpacing: 8,
+                    children: _suggestedSkills.where((s) => !_mySkills.contains(s)).map((skill) => ActionChip(
+                      label: Text(skill),
+                      onPressed: () => _addSkill(skill),
+                      backgroundColor: Colors.grey.shade100,
+                    )).toList(),
+                  ),
+                  const SizedBox(height: 40),
+                ],
                 const Text("Certificates", style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
                 const SizedBox(height: 10),
                 ..._certificates.map((cert) => ListTile(

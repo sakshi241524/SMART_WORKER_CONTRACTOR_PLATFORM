@@ -4,6 +4,9 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'register_screen.dart';
 import 'contractor_dashboard.dart';
 import 'worker_dashboard.dart';
+import 'package:provider/provider.dart';
+import 'app_state.dart';
+import 'app_state.dart';
 
 class SignInScreen extends StatefulWidget {
   final String role;
@@ -64,8 +67,11 @@ class _SignInScreenState extends State<SignInScreen> {
             );
           }
         } else {
-          // Success! Navigate to Home
+          // Success! Navigate to Home directly
           if (mounted) {
+            // Mark welcome as dismissed for this session
+            Provider.of<AppState>(context, listen: false).dismissWelcome();
+
             Widget nextScreen = widget.role == 'Contractor' 
                 ? const ContractorDashboard() 
                 : const WorkerDashboard();
@@ -124,7 +130,7 @@ class _SignInScreenState extends State<SignInScreen> {
             children: [
               const SizedBox(height: 40),
               const Text(
-                'Welcome Back',
+                'Welcome to SWCP',
                 style: TextStyle(
                   fontSize: 32,
                   fontWeight: FontWeight.bold,
@@ -189,13 +195,13 @@ class _SignInScreenState extends State<SignInScreen> {
                   );
                 },
                 child: RichText(
-                  text: const TextSpan(
+                  text: TextSpan(
                     text: "Don't have an account? ",
-                    style: TextStyle(color: Colors.black54),
+                    style: const TextStyle(color: Colors.black54),
                     children: [
                       TextSpan(
                         text: 'Register',
-                        style: TextStyle(
+                        style: const TextStyle(
                           color: Color(0xFF0F3A40),
                           fontWeight: FontWeight.bold,
                         ),

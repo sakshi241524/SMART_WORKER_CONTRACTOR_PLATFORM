@@ -95,9 +95,9 @@ class _ContractorProfileScreenState extends State<ContractorProfileScreen> {
           ),
           _buildMenuItem(
             icon: Icons.card_membership_outlined,
-            title: "Skills & Certificates",
+            title: "Certificates",
             onTap: () async {
-              final result = await Navigator.push(context, MaterialPageRoute(builder: (context) => const SkillsCertificatesScreen()));
+              final result = await Navigator.push(context, MaterialPageRoute(builder: (context) => const SkillsCertificatesScreen(showSkills: false)));
               if (result == true) _fetchUserData();
             },
           ),

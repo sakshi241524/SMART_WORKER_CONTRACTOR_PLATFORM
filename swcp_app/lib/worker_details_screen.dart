@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'send_message_screen.dart';
 import 'post_job_screen.dart';
+import 'direct_post_job_screen.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 
 class WorkerDetailsScreen extends StatelessWidget {
@@ -170,7 +171,9 @@ class WorkerDetailsScreen extends StatelessWidget {
                       onPressed: () {
                         Navigator.push(
                           context,
-                          MaterialPageRoute(builder: (context) => const PostJobScreen()),
+                          MaterialPageRoute(
+                            builder: (context) => DirectPostJobScreen(workerData: workerData),
+                          ),
                         );
                       },
                       icon: const Icon(Icons.business_center),

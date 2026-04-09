@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../app_state.dart';
+import '../app_state.dart';
 
 class AccountSettingsScreen extends StatelessWidget {
   const AccountSettingsScreen({super.key});
@@ -11,7 +12,7 @@ class AccountSettingsScreen extends StatelessWidget {
 
     return Scaffold(
       appBar: AppBar(
-        title: const Text("Account Settings", style: TextStyle(fontWeight: FontWeight.bold)),
+        title: const Text('Account Settings', style: TextStyle(fontWeight: FontWeight.bold)),
         backgroundColor: Colors.white,
         foregroundColor: Colors.black,
         elevation: 0,
@@ -19,7 +20,7 @@ class AccountSettingsScreen extends StatelessWidget {
       body: ListView(
         padding: const EdgeInsets.all(20),
         children: [
-          const Text("Appearance", style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Colors.blueGrey)),
+          const Text('Appearance', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Colors.blueGrey)),
           const SizedBox(height: 10),
           Card(
             elevation: 0,
@@ -29,7 +30,7 @@ class AccountSettingsScreen extends StatelessWidget {
                 appState.themeMode == ThemeMode.light ? Icons.light_mode : Icons.dark_mode,
                 color: Colors.amber,
               ),
-              title: const Text("Dark Theme"),
+              title: const Text('Dark Theme'),
               subtitle: const Text("Toggle between light and dark mode"),
               trailing: Switch(
                 value: appState.themeMode == ThemeMode.dark,
@@ -39,14 +40,14 @@ class AccountSettingsScreen extends StatelessWidget {
             ),
           ),
           const SizedBox(height: 30),
-          const Text("Language", style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Colors.blueGrey)),
+          const Text('Language', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Colors.blueGrey)),
           const SizedBox(height: 10),
           _buildLanguageOption(context, appState, "English", "en"),
           _buildLanguageOption(context, appState, "हिंदी (Hindi)", "hi"),
           _buildLanguageOption(context, appState, "मराठी (Marathi)", "mr"),
           const SizedBox(height: 20),
           const Text(
-            "Note: Language changes are applied immediately using our localization API logic.",
+            "Note: The app is currently locked to English. These buttons are for illustration only.",
             style: TextStyle(fontSize: 12, color: Colors.grey, fontStyle: FontStyle.italic),
           ),
         ],

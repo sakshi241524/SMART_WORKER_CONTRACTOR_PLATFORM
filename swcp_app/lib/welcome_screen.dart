@@ -1,11 +1,18 @@
 import 'package:flutter/material.dart';
 import 'role_selection_screen.dart';
+import 'package:provider/provider.dart';
+import 'app_state.dart';
 
 class WelcomeScreen extends StatelessWidget {
   const WelcomeScreen({super.key});
 
   @override
   Widget build(BuildContext context) {
+    // Record this as the last visited guest route
+    Future.microtask(() {
+      Provider.of<AppState>(context, listen: false).setLastGuestRoute('Welcome');
+    });
+
     return Scaffold(
       backgroundColor: const Color(0xFFFBFBFC), // Very light grey/white background
       body: SafeArea(
@@ -26,28 +33,28 @@ class WelcomeScreen extends StatelessWidget {
             children: [
               // Top Section: Title & Subtitle spaced down from the top
               Padding(
-                padding: const EdgeInsets.only(top: 120.0),
+                padding: const EdgeInsets.only(top: 100.0),
                 child: Column(
                   children: [
                     const Text(
                       'SmartConnect',
                       style: TextStyle(
-                        fontSize: 44,
+                        fontSize: 48,
                         fontWeight: FontWeight.w900,
                         color: Color(0xFF0F3A40), // Dark teal/greenish color
                         letterSpacing: -1.0, 
                       ),
                     ),
-                    const SizedBox(height: 20),
+                    const SizedBox(height: 10),
                     const Text(
                       'SMART WORKER CONTRACTOR\nPLATFORM',
                       textAlign: TextAlign.center,
                       style: TextStyle(
-                        fontSize: 14,
-                        fontWeight: FontWeight.w500,
+                        fontSize: 16,
+                        fontWeight: FontWeight.w600,
                         color: Colors.black54,
-                        letterSpacing: 2.0,
-                        height: 1.5,
+                        letterSpacing: 3.5,
+                        height: 1.4,
                       ),
                     ),
                   ],
@@ -64,7 +71,7 @@ class WelcomeScreen extends StatelessWidget {
                     style: ElevatedButton.styleFrom(
                       backgroundColor: const Color(0xFFFF9B9D), // Light coral/pink
                       shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(15), 
+                        borderRadius: BorderRadius.circular(20), 
                       ),
                       elevation: 0,
                     ),
@@ -76,8 +83,8 @@ class WelcomeScreen extends StatelessWidget {
                     child: const Text(
                       'Get Started',
                       style: TextStyle(
-                        fontSize: 18,
-                        fontWeight: FontWeight.w600,
+                        fontSize: 20,
+                        fontWeight: FontWeight.bold,
                         color: Colors.white,
                       ),
                     ),

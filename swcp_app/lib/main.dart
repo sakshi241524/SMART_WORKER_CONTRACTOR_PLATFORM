@@ -2,7 +2,6 @@ import 'package:flutter/material.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'firebase_options.dart';
 import 'auth_wrapper.dart';
-
 import 'package:provider/provider.dart';
 import 'app_state.dart';
 
@@ -19,13 +18,18 @@ void main() async {
     debugPrint("SWCP App: Firebase initialization error: $e");
   }
 
+  // Initialize and load persistent state
+  final appState = AppState();
+  await appState.init();
+
   runApp(
-    ChangeNotifierProvider(
-      create: (context) => AppState(),
+    ChangeNotifierProvider.value(
+      value: appState,
       child: const MyApp(),
     ),
   );
 }
+
 
 class MyApp extends StatelessWidget {
   const MyApp({super.key});
@@ -43,7 +47,8 @@ class MyApp extends StatelessWidget {
         useMaterial3: true,
       ),
       darkTheme: ThemeData.dark(useMaterial3: true),
-      locale: appState.locale,
+      // Multi-language support removed - Locked to English
+      locale: const Locale('en'),
       home: const AuthWrapper(),
     );
   }

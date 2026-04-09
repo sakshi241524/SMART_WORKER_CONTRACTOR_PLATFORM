@@ -56,11 +56,11 @@ class _RegisterScreenState extends State<RegisterScreen> {
 
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Registration Successful!')),
+          SnackBar(content: Text('Registration Successful!')),
         );
         Widget nextScreen = widget.role == 'Contractor' 
-            ? const ContractorDashboard() 
-            : const WorkerDashboard();
+            ? ContractorDashboard() 
+            : WorkerDashboard();
         Navigator.of(context).pushAndRemoveUntil(
           MaterialPageRoute(builder: (context) => nextScreen),
           (route) => false,
@@ -178,13 +178,13 @@ class _RegisterScreenState extends State<RegisterScreen> {
                   Navigator.of(context).pop();
                 },
                 child: RichText(
-                  text: const TextSpan(
+                  text: TextSpan(
                     text: 'Already have an account? ',
-                    style: TextStyle(color: Colors.black54),
+                    style: const TextStyle(color: Colors.black54),
                     children: [
                       TextSpan(
                         text: 'Sign In',
-                        style: TextStyle(
+                        style: const TextStyle(
                           color: Color(0xFF0F3A40),
                           fontWeight: FontWeight.bold,
                         ),
