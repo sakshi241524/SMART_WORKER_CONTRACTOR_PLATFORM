@@ -1,6 +1,10 @@
+import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:image_picker/image_picker.dart';
+import 'package:cached_network_image/cached_network_image.dart';
+import 'services/storage_service.dart';
 import 'profile_sections/contractor_personal_info_screen.dart';
 import 'profile_sections/skills_certificates_screen.dart';
 import 'profile_sections/contractor_experience_screen.dart';
@@ -17,6 +21,9 @@ class ContractorProfileScreen extends StatefulWidget {
 class _ContractorProfileScreenState extends State<ContractorProfileScreen> {
   String _name = "...";
   String _email = "...";
+  String? _profileImageUrl;
+  bool _isUploading = false;
+  final StorageService _storageService = StorageService();
 
   @override
   void initState() {
@@ -33,6 +40,7 @@ class _ContractorProfileScreenState extends State<ContractorProfileScreen> {
         if (mounted) {
           setState(() {
             _name = doc.get('name') ?? "Contractor Name";
+            _profileImageUrl = doc.data()?.containsKey('profileImageUrl') == true ? doc.get('profileImageUrl') : null;
           });
         }
       }
@@ -50,13 +58,52 @@ class _ContractorProfileScreenState extends State<ContractorProfileScreen> {
             padding: const EdgeInsets.symmetric(horizontal: 20),
             child: Row(
               children: [
-                CircleAvatar(
-                  radius: 45,
-                  backgroundColor: const Color(0xFF0F3A40).withOpacity(0.1),
-                  child: Text(
-                    _name.isNotEmpty ? _name[0].toUpperCase() : "C",
-                    style: const TextStyle(fontSize: 40, fontWeight: FontWeight.bold, color: Color(0xFF0F3A40)),
-                  ),
+                Stack(
+                  children: [
+                    GestureDetector(
+                      onTap: _pickAndUploadImage,
+                      child: CircleAvatar(
+                        radius: 45,
+                        backgroundColor: const Color(0xFF0F3A40).withOpacity(0.1),
+                        backgroundImage: _profileImageUrl != null
+                            ? CachedNetworkImageProvider(_profileImageUrl!)
+                            : null,
+                        child: _profileImageUrl == null
+                            ? Text(
+                                _name.isNotEmpty ? _name[0].toUpperCase() : "C",
+                                style: const TextStyle(fontSize: 40, fontWeight: FontWeight.bold, color: Color(0xFF0F3A40)),
+                              )
+                            : null,
+                      ),
+                    ),
+                    if (_isUploading)
+                      Positioned.fill(
+                        child: Container(
+                          decoration: BoxDecoration(
+                            color: Colors.black26,
+                            borderRadius: BorderRadius.circular(45),
+                          ),
+                          child: const Center(
+                            child: CircularProgressIndicator(color: Colors.white),
+                          ),
+                        ),
+                      ),
+                    Positioned(
+                      bottom: 0,
+                      right: 0,
+                      child: GestureDetector(
+                        onTap: _pickAndUploadImage,
+                        child: Container(
+                          padding: const EdgeInsets.all(4),
+                          decoration: const BoxDecoration(
+                            color: Color(0xFF0F3A40),
+                            shape: BoxShape.circle,
+                          ),
+                          child: const Icon(Icons.edit, size: 16, color: Colors.white),
+                        ),
+                      ),
+                    ),
+                  ],
                 ),
                 const SizedBox(width: 20),
                 Expanded(
@@ -188,5 +235,42 @@ class _ContractorProfileScreenState extends State<ContractorProfileScreen> {
         ),
       ),
     );
+  }
+
+  Future<void> _pickAndUploadImage() async {
+    if (_isUploading) return;
+
+    final ImagePicker picker = ImagePicker();
+    final XFile? image = await picker.pickImage(
+      source: ImageSource.gallery,
+      imageQuality: 70,
+    );
+
+    if (image != null) {
+      if (mounted) setState(() => _isUploading = true);
+      
+      final user = FirebaseAuth.instance.currentUser;
+      if (user != null) {
+        final String? downloadUrl = await _storageService.uploadProfileImage(File(image.path), user.uid);
+        if (downloadUrl != null) {
+          if (mounted) {
+            setState(() {
+              _profileImageUrl = downloadUrl;
+            });
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(content: Text('Profile image updated successfully!')),
+            );
+          }
+        } else {
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(content: Text('Failed to upload image.')),
+            );
+          }
+        }
+      }
+      
+      if (mounted) setState(() => _isUploading = false);
+    }
   }
 }

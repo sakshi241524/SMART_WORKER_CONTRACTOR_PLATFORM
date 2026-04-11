@@ -28,6 +28,8 @@ class _WorkerDashboardState extends State<WorkerDashboard> {
   bool _isUpdating = false;
   bool _isSharingLocation = false;
   String? _locationStatus;
+  bool _isDeleteMode = false;
+  final Set<String> _selectedJobIds = {};
 
   @override
   void initState() {
@@ -148,9 +150,8 @@ class _WorkerDashboardState extends State<WorkerDashboard> {
     switch (_selectedIndex) {
       case 0: return 'Dashboard';
       case 1: return 'Jobs';
-      case 2: return 'Alerts';
-      case 3: return 'Messages';
-      case 4: return 'Settings';
+      case 2: return 'Messages';
+      case 3: return 'Settings';
       default: return "Worker Dashboard";
     }
   }
@@ -161,6 +162,62 @@ class _WorkerDashboardState extends State<WorkerDashboard> {
     });
     // Persist the last active index
     Provider.of<AppState>(context, listen: false).setLastDashboardIndex(index);
+    if (index != 1) {
+      setState(() {
+        _isDeleteMode = false;
+        _selectedJobIds.clear();
+      });
+    }
+  }
+
+  Future<void> _rejectSelectedJobs() async {
+    final uid = FirebaseAuth.instance.currentUser?.uid;
+    if (uid == null || _selectedJobIds.isEmpty) return;
+
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text('Delete ${_selectedJobIds.length} Jobs?'),
+        content: const Text('These jobs will be removed from your list. You can\'t undo this action.'),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Cancel')),
+          TextButton(
+            onPressed: () => Navigator.pop(context, true), 
+            child: const Text('Delete', style: TextStyle(color: Colors.red, fontWeight: FontWeight.bold))
+          ),
+        ],
+      ),
+    );
+
+    if (confirm == true) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Row(children: [CircularProgressIndicator(strokeWidth: 2), SizedBox(width: 16), Text('Deleting jobs...')]))
+      );
+
+      try {
+        final batch = FirebaseFirestore.instance.batch();
+        for (String id in _selectedJobIds) {
+          batch.update(FirebaseFirestore.instance.collection('jobs').doc(id), {
+            'rejectedBy': FieldValue.arrayUnion([uid])
+          });
+        }
+        await batch.commit();
+
+        if (mounted) {
+          setState(() {
+            _isDeleteMode = false;
+            _selectedJobIds.clear();
+          });
+          ScaffoldMessenger.of(context).hideCurrentSnackBar();
+          ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Jobs deleted successfully')));
+        }
+      } catch (e) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).hideCurrentSnackBar();
+          ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Error: $e'), backgroundColor: Colors.red));
+        }
+      }
+    }
   }
 
   Widget _buildHomeView() {
@@ -421,6 +478,20 @@ class _WorkerDashboardState extends State<WorkerDashboard> {
             Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
+                if (_isDeleteMode)
+                  Checkbox(
+                    value: _selectedJobIds.contains(jobId),
+                    onChanged: (val) {
+                      setState(() {
+                        if (val == true) {
+                          _selectedJobIds.add(jobId);
+                        } else {
+                          _selectedJobIds.remove(jobId);
+                        }
+                      });
+                    },
+                    activeColor: const Color(0xFFA5555A),
+                  ),
                 Expanded(
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
@@ -433,22 +504,23 @@ class _WorkerDashboardState extends State<WorkerDashboard> {
                     ],
                   ),
                 ),
-                Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-                  decoration: BoxDecoration(
-                    color: isUrgent ? Colors.red.shade50 : const Color(0xFF0F3A40).withOpacity(0.1), 
-                    borderRadius: BorderRadius.circular(10),
-                    border: isUrgent ? Border.all(color: Colors.red.shade200) : null,
+                if (!_isDeleteMode)
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                    decoration: BoxDecoration(
+                      color: isUrgent ? Colors.red.shade50 : const Color(0xFF0F3A40).withOpacity(0.1), 
+                      borderRadius: BorderRadius.circular(10),
+                      border: isUrgent ? Border.all(color: Colors.red.shade200) : null,
+                    ),
+                    child: Text(
+                      isUrgent ? 'URGENT' : label.toUpperCase(), 
+                      style: TextStyle(
+                        color: isUrgent ? Colors.red : const Color(0xFF0F3A40), 
+                        fontWeight: FontWeight.bold, 
+                        fontSize: 12
+                      )
+                    ),
                   ),
-                  child: Text(
-                    isUrgent ? 'URGENT' : label.toUpperCase(), 
-                    style: TextStyle(
-                      color: isUrgent ? Colors.red : const Color(0xFF0F3A40), 
-                      fontWeight: FontWeight.bold, 
-                      fontSize: 12
-                    )
-                  ),
-                ),
               ],
             ),
             if (score != null && score >= 0.6) ...[
@@ -476,20 +548,37 @@ class _WorkerDashboardState extends State<WorkerDashboard> {
               width: double.infinity,
               child: ElevatedButton(
                 onPressed: () {
-                  Navigator.push(
-                    context,
-                    MaterialPageRoute(
-                      builder: (context) => JobDetailsWorkerScreen(jobData: data, jobId: jobId),
-                    ),
-                  );
+                  if (_isDeleteMode) {
+                    setState(() {
+                      if (_selectedJobIds.contains(jobId)) {
+                        _selectedJobIds.remove(jobId);
+                      } else {
+                        _selectedJobIds.add(jobId);
+                      }
+                    });
+                  } else {
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (context) => JobDetailsWorkerScreen(jobData: data, jobId: jobId),
+                      ),
+                    );
+                  }
                 },
                 style: ElevatedButton.styleFrom(
-                  backgroundColor: const Color(0xFF0F3A40),
+                  backgroundColor: _isDeleteMode 
+                      ? (_selectedJobIds.contains(jobId) ? Colors.grey : const Color(0xFFA5555A))
+                      : const Color(0xFF0F3A40),
                   foregroundColor: Colors.white,
                   padding: const EdgeInsets.symmetric(vertical: 12),
                   shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
                 ),
-                child: const Text('View Details', style: TextStyle(fontWeight: FontWeight.bold)),
+                child: Text(
+                  _isDeleteMode 
+                    ? (_selectedJobIds.contains(jobId) ? 'Selected' : 'Select for removal') 
+                    : 'View Details', 
+                  style: const TextStyle(fontWeight: FontWeight.bold)
+                ),
               ),
             ),
           ],
@@ -542,12 +631,110 @@ class _WorkerDashboardState extends State<WorkerDashboard> {
     );
   }
 
+  Widget _buildMyJobsView() {
+    return StreamBuilder<QuerySnapshot>(
+      stream: FirebaseFirestore.instance.collection('jobs').snapshots(),
+      builder: (context, snapshot) {
+        if (snapshot.hasError) return Center(child: Text('Error: ${snapshot.error}'));
+        if (snapshot.connectionState == ConnectionState.waiting) return const Center(child: CircularProgressIndicator());
+        
+        final uid = FirebaseAuth.instance.currentUser?.uid;
+
+        final jobScores = snapshot.data!.docs.map((doc) {
+          final data = doc.data() as Map<String, dynamic>;
+          final targetId = data['targetWorkerId']?.toString();
+          final List<dynamic> rejectedBy = data['rejectedBy'] is List ? data['rejectedBy'] : [];
+          final Map<String, dynamic> accepted = data['acceptedWorkers'] is Map ? data['acceptedWorkers'] : {};
+          final String status = data['status'] ?? 'open';
+          
+          if (rejectedBy.contains(uid)) return null;
+
+          bool alreadyJoined = false;
+          accepted.values.forEach((list) {
+            if (list is List && list.contains(uid)) alreadyJoined = true;
+          });
+
+          if (alreadyJoined) {
+            return {
+              'data': data,
+              'id': doc.id,
+              'score': 1.0,
+              'isJoined': true,
+            };
+          }
+          
+          if (status != 'open') return null;
+
+          final List<dynamic> targetedIds = data['targetedWorkerIds'] is List ? data['targetedWorkerIds'] : [];
+          
+          bool isVisible = false;
+          if (targetId != null && targetId.isNotEmpty) {
+            isVisible = (targetId == uid);
+          } else if (targetedIds.isNotEmpty) {
+            isVisible = targetedIds.contains(uid);
+          } else {
+            isVisible = true;
+          }
+          
+          if (!isVisible) return null;
+
+          final double score = JobRankingEngine.calculateJobScore(
+            workerSkills: _workerSkills,
+            jobRequiredProfessions: data['requiredWorkers'] ?? {},
+            createdAt: data['createdAt'],
+            jobDate: data['date'],
+            isTargeted: (targetId == uid) || targetedIds.contains(uid),
+          );
+
+          return {
+            'data': data,
+            'id': doc.id,
+            'score': score,
+            'isJoined': false,
+          };
+        }).whereType<Map<String, dynamic>>().toList();
+
+        jobScores.sort((a, b) {
+          if (a['isJoined'] != b['isJoined']) {
+            return a['isJoined'] ? -1 : 1;
+          }
+          return (b['score'] as double).compareTo(a['score'] as double);
+        });
+
+        if (jobScores.isEmpty) {
+          return Center(
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Icon(Icons.business_center_outlined, size: 64, color: Colors.grey.withOpacity(0.5)),
+                const SizedBox(height: 16),
+                const Text('No jobs here yet', style: TextStyle(color: Colors.grey, fontSize: 18)),
+              ],
+            ),
+          );
+        }
+
+        return ListView.builder(
+          padding: const EdgeInsets.all(16),
+          itemCount: jobScores.length,
+          itemBuilder: (context, index) {
+            final job = jobScores[index];
+            final data = job['data'] as Map<String, dynamic>;
+            final id = job['id'] as String;
+            final score = job['score'] as double;
+
+            return _buildJobCard(data, id, score);
+          },
+        );
+      },
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     List<Widget> widgetOptions = <Widget>[
       _buildHomeView(),
       _buildMyJobsView(),
-      _buildAlertsView(),
       const ChatsListScreen(),
       const WorkerProfileScreen(),
     ];
@@ -602,6 +789,80 @@ class _WorkerDashboardState extends State<WorkerDashboard> {
                 onPressed: _updateCurrentLocation,
                 tooltip: "Enable Location Access",
               ),
+            StreamBuilder<QuerySnapshot>(
+              stream: FirebaseFirestore.instance
+                  .collection('notifications')
+                  .where('workerId', isEqualTo: FirebaseAuth.instance.currentUser?.uid)
+                  .where('isRead', isEqualTo: false)
+                  .snapshots(),
+              builder: (context, snapshot) {
+                int count = 0;
+                if (snapshot.hasData) {
+                  // Count total or just unread? Contractor uses isRead: false.
+                  // For worker, we'll show all they haven't seen yet.
+                  // For simplicity, total for now, or add isRead field logic.
+                  count = snapshot.data!.docs.length;
+                }
+
+                return Stack(
+                  alignment: Alignment.center,
+                  children: [
+                    IconButton(
+                      icon: Icon(
+                        count > 0 ? Icons.notifications_active : Icons.notifications_none_outlined,
+                        color: const Color(0xFF0F3A40),
+                      ),
+                      onPressed: () {
+                        Navigator.push(
+                          context,
+                          MaterialPageRoute(builder: (context) => const WorkerAlertsScreen()),
+                        );
+                      },
+                    ),
+                    if (count > 0)
+                      Positioned(
+                        right: 8,
+                        top: 8,
+                        child: Container(
+                          padding: const EdgeInsets.all(2),
+                          decoration: BoxDecoration(
+                            color: const Color(0xFFA5555A),
+                            borderRadius: BorderRadius.circular(10),
+                          ),
+                          constraints: const BoxConstraints(minWidth: 16, minHeight: 16),
+                          child: Text(
+                            '$count',
+                            style: const TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.bold),
+                            textAlign: TextAlign.center,
+                          ),
+                        ),
+                      ),
+                  ],
+                );
+              },
+            ),
+            if (_selectedIndex == 1)
+              _isDeleteMode
+                ? Row(
+                    children: [
+                      if (_selectedJobIds.isNotEmpty)
+                        TextButton(
+                          onPressed: _rejectSelectedJobs,
+                          child: const Text('Delete', style: TextStyle(color: Colors.red, fontWeight: FontWeight.bold)),
+                        ),
+                      IconButton(
+                        icon: const Icon(Icons.close, color: Color(0xFF0F3A40)),
+                        onPressed: () => setState(() {
+                          _isDeleteMode = false;
+                          _selectedJobIds.clear();
+                        }),
+                      ),
+                    ],
+                  )
+                : IconButton(
+                    icon: const Icon(Icons.delete_outline, color: Color(0xFF0F3A40)),
+                    onPressed: () => setState(() => _isDeleteMode = true),
+                  ),
           ],
         ),
         body: widgetOptions.elementAt(_selectedIndex),
@@ -616,11 +877,6 @@ class _WorkerDashboardState extends State<WorkerDashboard> {
               icon: const Icon(Icons.business_center_outlined),
               activeIcon: const Icon(Icons.business_center),
               label: 'Jobs',
-            ),
-            BottomNavigationBarItem(
-              icon: const Icon(Icons.notifications_outlined),
-              activeIcon: const Icon(Icons.notifications),
-              label: 'Alerts',
             ),
             BottomNavigationBarItem(
               icon: const Icon(Icons.chat_bubble_outline),
@@ -643,228 +899,170 @@ class _WorkerDashboardState extends State<WorkerDashboard> {
       ),
     );
   }
+}
 
-  Widget _buildMyJobsView() {
-    return StreamBuilder<QuerySnapshot>(
-      // Get all jobs (using snapshots() on collection) to handle filtering in code
-      // This ensures we see joined jobs even if their status is closed
-      stream: FirebaseFirestore.instance.collection('jobs').snapshots(),
-      builder: (context, snapshot) {
-        if (snapshot.hasError) return Center(child: Text('Error: ${snapshot.error}'));
-        if (snapshot.connectionState == ConnectionState.waiting) return const Center(child: CircularProgressIndicator());
-        
-        final uid = FirebaseAuth.instance.currentUser?.uid;
+class WorkerAlertsScreen extends StatefulWidget {
+  const WorkerAlertsScreen({super.key});
 
-        final jobScores = snapshot.data!.docs.map((doc) {
-          final data = doc.data() as Map<String, dynamic>;
-          final targetId = data['targetWorkerId'];
-          final List<dynamic> rejectedBy = data['rejectedBy'] is List ? data['rejectedBy'] : [];
-          final Map<String, dynamic> accepted = data['acceptedWorkers'] is Map ? data['acceptedWorkers'] : {};
-          final String status = data['status'] ?? 'open';
-          
-          if (rejectedBy.contains(uid)) return null;
+  @override
+  State<WorkerAlertsScreen> createState() => _WorkerAlertsScreenState();
+}
 
-          bool alreadyJoined = false;
-          accepted.values.forEach((list) {
-            if (list is List && list.contains(uid)) alreadyJoined = true;
-          });
-
-          if (alreadyJoined) {
-            return {
-              'data': data,
-              'id': doc.id,
-              'score': 1.0, // Joined jobs at the top
-              'isJoined': true,
-            };
-          }
-          
-          if (status != 'open') return null;
-
-          final List<dynamic> targetedIds = data['targetedWorkerIds'] is List ? data['targetedWorkerIds'] : [];
-          
-          // Targeted Dispatch Logic
-          bool isVisible = false;
-          if (targetId != null) {
-            isVisible = (targetId == uid);
-          } else if (targetedIds.isNotEmpty) {
-            isVisible = targetedIds.contains(uid);
-          } else {
-            // Legacy/Public jobs
-            isVisible = true;
-          }
-          
-          if (!isVisible) return null;
-
-          final double score = JobRankingEngine.calculateJobScore(
-            workerSkills: _workerSkills,
-            jobRequiredProfessions: data['requiredWorkers'] ?? {},
-            createdAt: data['createdAt'],
-            jobDate: data['date'],
-            isTargeted: (targetId == uid) || targetedIds.contains(uid),
-          );
-
-          return {
-            'data': data,
-            'id': doc.id,
-            'score': score,
-            'isJoined': false,
-          };
-        }).whereType<Map<String, dynamic>>().toList();
-
-        // Sort: Joined jobs first, then by score
-        jobScores.sort((a, b) {
-          if (a['isJoined'] != b['isJoined']) {
-            return a['isJoined'] ? -1 : 1;
-          }
-          return (b['score'] as double).compareTo(a['score'] as double);
-        });
-
-        if (jobScores.isEmpty) {
-          return Center(
-            child: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                Icon(Icons.business_center_outlined, size: 64, color: Colors.grey.withOpacity(0.5)),
-                const SizedBox(height: 16),
-                const Text('No jobs here yet', style: TextStyle(color: Colors.grey, fontSize: 18)),
-              ],
-            ),
-          );
-        }
-
-        return ListView.builder(
-          padding: const EdgeInsets.all(16),
-          itemCount: jobScores.length,
-          itemBuilder: (context, index) {
-            final job = jobScores[index];
-            final data = job['data'] as Map<String, dynamic>;
-            final id = job['id'] as String;
-            final score = job['score'] as double;
-
-            return _buildJobCard(data, id, score);
-          },
-        );
-      },
-    );
+class _WorkerAlertsScreenState extends State<WorkerAlertsScreen> {
+  @override
+  void initState() {
+    super.initState();
+    _markAlertsAsRead();
   }
 
-  Widget _buildAlertsView() {
+  Future<void> _markAlertsAsRead() async {
     final uid = FirebaseAuth.instance.currentUser?.uid;
-    return StreamBuilder<QuerySnapshot>(
-      stream: FirebaseFirestore.instance
+    if (uid == null) return;
+
+    try {
+      final snapshots = await FirebaseFirestore.instance
           .collection('notifications')
           .where('workerId', isEqualTo: uid)
-          .snapshots(),
-      builder: (context, snapshot) {
-        if (snapshot.hasError) {
-          return Center(child: Text('Error: ${snapshot.error}', style: const TextStyle(color: Colors.red)));
+          .where('isRead', isEqualTo: false)
+          .get();
+
+      if (snapshots.docs.isNotEmpty) {
+        final batch = FirebaseFirestore.instance.batch();
+        for (var doc in snapshots.docs) {
+          batch.update(doc.reference, {'isRead': true});
         }
-        if (snapshot.connectionState == ConnectionState.waiting) {
-          return const Center(child: CircularProgressIndicator());
-        }
-        if (!snapshot.hasData || snapshot.data!.docs.isEmpty) {
-          return Center(
-            child: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                Icon(Icons.notifications_none, size: 64, color: Colors.grey.withOpacity(0.5)),
-                const SizedBox(height: 16),
-                const Text('No alerts yet', style: TextStyle(color: Colors.grey, fontSize: 18)),
-              ],
-            ),
-          );
-        }
+        await batch.commit();
+      }
+    } catch (e) {
+      debugPrint("Error marking worker alerts as read: $e");
+    }
+  }
 
-        // Fix: Sort documents manually here to avoid needing a Firestore composite index
-        final docs = snapshot.data!.docs;
-        docs.sort((a, b) {
-          final aTime = (a.data() as Map<String, dynamic>)['timestamp'] as Timestamp?;
-          final bTime = (b.data() as Map<String, dynamic>)['timestamp'] as Timestamp?;
-          if (aTime == null || bTime == null) return 0;
-          return bTime.compareTo(aTime); // Latest first
-        });
-
-        return ListView.builder(
-          padding: const EdgeInsets.all(16),
-          itemCount: docs.length,
-          itemBuilder: (context, index) {
-            final doc = docs[index];
-            final data = doc.data() as Map<String, dynamic>;
-            final timestamp = (data['timestamp'] as Timestamp?)?.toDate() ?? DateTime.now();
-            final timeStr = "${timestamp.hour}:${timestamp.minute.toString().padLeft(2, '0')}";
-
-            return Card(
-              margin: const EdgeInsets.only(bottom: 12),
-              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-              elevation: 0,
-              color: Colors.white,
-              child: Container(
-                decoration: BoxDecoration(
-                  borderRadius: BorderRadius.circular(16),
-                  border: Border.all(color: Colors.grey.shade100),
-                ),
-                child: Column(
-                  children: [
-                    ListTile(
-                      contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                      leading: CircleAvatar(
-                        backgroundColor: const Color(0xFF0F3A40).withOpacity(0.1),
-                        child: Text(
-                          data['senderName']?[0].toUpperCase() ?? data['contractorName']?[0].toUpperCase() ?? 'C',
-                          style: const TextStyle(color: Color(0xFF0F3A40), fontWeight: FontWeight.bold),
-                        ),
-                      ),
-                      title: Row(
-                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                        children: [
-                          Text(data['senderName'] ?? data['contractorName'] ?? 'Contractor', style: const TextStyle(fontWeight: FontWeight.bold)),
-                          Text(timeStr, style: const TextStyle(fontSize: 12, color: Colors.grey)),
-                        ],
-                      ),
-                      subtitle: Padding(
-                        padding: const EdgeInsets.only(top: 4.0),
-                        child: Text(data['message'] ?? '', style: const TextStyle(color: Colors.black87)),
-                      ),
-                    ),
-                    Padding(
-                      padding: const EdgeInsets.only(bottom: 12, right: 16),
-                      child: Row(
-                        mainAxisAlignment: MainAxisAlignment.end,
-                        children: [
-                          TextButton.icon(
-                            onPressed: () {
-                              final workerId = FirebaseAuth.instance.currentUser?.uid ?? '';
-                              final contractorId = data['senderId'] ?? data['contractorId'] ?? '';
-                              if (workerId.isEmpty || contractorId.isEmpty) return;
-
-                              final ids = [workerId, contractorId];
-                              ids.sort();
-                              final chatId = ids.join('_');
-
-                              Navigator.push(
-                                context,
-                                MaterialPageRoute(
-                                  builder: (context) => ChatConversationScreen(
-                                    chatId: chatId,
-                                    otherUserId: contractorId,
-                                    otherUserName: data['senderName'] ?? data['contractorName'] ?? 'Contractor',
-                                  ),
-                                ),
-                              );
-                            },
-                            icon: const Icon(Icons.reply, size: 18, color: Color(0xFF0F3A40)),
-                            label: const Text('Respond', style: TextStyle(color: Color(0xFF0F3A40), fontWeight: FontWeight.bold)),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ],
-                ),
+  @override
+  Widget build(BuildContext context) {
+    final uid = FirebaseAuth.instance.currentUser?.uid;
+    return Scaffold(
+      backgroundColor: const Color(0xFFFBFBFC),
+      appBar: AppBar(
+        title: const Text('Notifications', style: TextStyle(fontWeight: FontWeight.bold, color: Color(0xFF0F3A40))),
+        backgroundColor: Colors.white,
+        elevation: 0,
+        leading: IconButton(
+          icon: const Icon(Icons.arrow_back, color: Color(0xFF0F3A40)),
+          onPressed: () => Navigator.pop(context),
+        ),
+      ),
+      body: StreamBuilder<QuerySnapshot>(
+        stream: FirebaseFirestore.instance
+            .collection('notifications')
+            .where('workerId', isEqualTo: uid)
+            .snapshots(),
+        builder: (context, snapshot) {
+          if (snapshot.hasError) return Center(child: Text('Error: ${snapshot.error}'));
+          if (snapshot.connectionState == ConnectionState.waiting) return const Center(child: CircularProgressIndicator());
+          if (!snapshot.hasData || snapshot.data!.docs.isEmpty) {
+            return Center(
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Icon(Icons.notifications_none, size: 64, color: Colors.grey.withOpacity(0.5)),
+                  const SizedBox(height: 16),
+                  const Text('No alerts yet', style: TextStyle(color: Colors.grey, fontSize: 18)),
+                ],
               ),
             );
-          },
-        );
-      },
+          }
+
+          final docs = snapshot.data!.docs;
+          docs.sort((a, b) {
+            final aTime = (a.data() as Map<String, dynamic>)['timestamp'] as Timestamp?;
+            final bTime = (b.data() as Map<String, dynamic>)['timestamp'] as Timestamp?;
+            if (aTime == null || bTime == null) return 0;
+            return bTime.compareTo(aTime);
+          });
+
+          return ListView.builder(
+            padding: const EdgeInsets.all(16),
+            itemCount: docs.length,
+            itemBuilder: (context, index) {
+              final doc = docs[index];
+              final data = doc.data() as Map<String, dynamic>;
+              final timestamp = (data['timestamp'] as Timestamp?)?.toDate() ?? DateTime.now();
+              final timeStr = "${timestamp.hour}:${timestamp.minute.toString().padLeft(2, '0')}";
+
+              return Card(
+                margin: const EdgeInsets.only(bottom: 12),
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                elevation: 0,
+                color: Colors.white,
+                child: Container(
+                  decoration: BoxDecoration(
+                    borderRadius: BorderRadius.circular(16),
+                    border: Border.all(color: Colors.grey.shade100),
+                  ),
+                  child: Column(
+                    children: [
+                      ListTile(
+                        contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                        leading: CircleAvatar(
+                          backgroundColor: const Color(0xFF0F3A40).withOpacity(0.1),
+                          child: Text(
+                            data['senderName']?[0].toUpperCase() ?? data['contractorName']?[0].toUpperCase() ?? 'C',
+                            style: const TextStyle(color: Color(0xFF0F3A40), fontWeight: FontWeight.bold),
+                          ),
+                        ),
+                        title: Row(
+                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                          children: [
+                            Text(data['senderName'] ?? data['contractorName'] ?? 'Contractor', style: const TextStyle(fontWeight: FontWeight.bold)),
+                            Text(timeStr, style: const TextStyle(fontSize: 12, color: Colors.grey)),
+                          ],
+                        ),
+                        subtitle: Padding(
+                          padding: const EdgeInsets.only(top: 4.0),
+                          child: Text(data['message'] ?? '', style: const TextStyle(color: Colors.black87)),
+                        ),
+                      ),
+                      Padding(
+                        padding: const EdgeInsets.only(bottom: 12, right: 16),
+                        child: Row(
+                          mainAxisAlignment: MainAxisAlignment.end,
+                          children: [
+                            TextButton.icon(
+                              onPressed: () {
+                                final workerId = FirebaseAuth.instance.currentUser?.uid ?? '';
+                                final contractorId = data['senderId'] ?? data['contractorId'] ?? '';
+                                if (workerId.isEmpty || contractorId.isEmpty) return;
+
+                                final ids = [workerId, contractorId];
+                                ids.sort();
+                                final chatId = ids.join('_');
+
+                                Navigator.push(
+                                  context,
+                                  MaterialPageRoute(
+                                    builder: (context) => ChatConversationScreen(
+                                      chatId: chatId,
+                                      otherUserId: contractorId,
+                                      otherUserName: data['senderName'] ?? data['contractorName'] ?? 'Contractor',
+                                    ),
+                                  ),
+                                );
+                              },
+                              icon: const Icon(Icons.reply, size: 18, color: Color(0xFF0F3A40)),
+                              label: const Text('Respond', style: TextStyle(color: Color(0xFF0F3A40), fontWeight: FontWeight.bold)),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              );
+            },
+          );
+        },
+      ),
     );
   }
 }

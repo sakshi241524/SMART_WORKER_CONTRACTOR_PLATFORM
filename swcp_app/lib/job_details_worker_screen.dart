@@ -83,6 +83,28 @@ class _JobDetailsWorkerScreenState extends State<JobDetailsWorkerScreen> {
         });
       });
 
+      // Send notification to contractor
+      final contractorId = widget.jobData['contractorId'] ?? widget.jobData['constructorId'];
+      if (contractorId != null) {
+        try {
+          final workerDoc = await FirebaseFirestore.instance.collection('users').doc(uid).get();
+          final workerName = workerDoc.data()?['name'] ?? 'A worker';
+          
+          await FirebaseFirestore.instance.collection('notifications').add({
+            'receiverId': contractorId,
+            'senderId': uid,
+            'senderName': workerName,
+            'type': 'job_accepted',
+            'message': '$workerName has joined your job: ${widget.jobData['jobName'] ?? 'Untitled Job'}',
+            'jobId': widget.jobId,
+            'timestamp': FieldValue.serverTimestamp(),
+            'isRead': false,
+          });
+        } catch (e) {
+          debugPrint("Error sending notification to contractor: $e");
+        }
+      }
+
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('Job accepted successfully!'), backgroundColor: Colors.green),

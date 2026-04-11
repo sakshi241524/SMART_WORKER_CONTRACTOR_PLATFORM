@@ -25,6 +25,8 @@ class ContractorDashboard extends StatefulWidget {
 
 class _ContractorDashboardState extends State<ContractorDashboard> {
   late int _selectedIndex;
+  bool _isDeleteMode = false;
+  final Set<String> _selectedJobIds = {};
 
   @override
   void initState() {
@@ -67,13 +69,11 @@ class _ContractorDashboardState extends State<ContractorDashboard> {
           _contractorLat = doc.data()?['latitude'];
           _contractorLng = doc.data()?['longitude'];
         });
-        
-        // If location is missing from Firestore, try to fetch it once
+
         if (_contractorLat == null || _contractorLng == null) {
           _fetchCurrentLocation();
         }
-        
-        // Fetch preferred skills from recent jobs
+
         _fetchPreferredSkills();
       }
     }
@@ -115,7 +115,7 @@ class _ContractorDashboardState extends State<ContractorDashboard> {
       final jobsSnap = await FirebaseFirestore.instance
           .collection('jobs')
           .where('contractorId', isEqualTo: uid)
-          .limit(10) // Look at last 10 jobs for preferences
+          .limit(10)
           .get();
 
       if (jobsSnap.docs.isNotEmpty) {
@@ -139,8 +139,10 @@ class _ContractorDashboardState extends State<ContractorDashboard> {
   void _onItemTapped(int index) {
     setState(() {
       _selectedIndex = index;
+      _isDeleteMode = false;
+      _selectedJobIds.clear();
     });
-    // Persist the last active index
+
     Provider.of<AppState>(context, listen: false).setLastDashboardIndex(index);
   }
 
@@ -166,7 +168,10 @@ class _ContractorDashboardState extends State<ContractorDashboard> {
               Expanded(
                 child: _buildStatCard(
                   'Jobs Posted',
-                  FirebaseFirestore.instance.collection('jobs').snapshots(),
+                  FirebaseFirestore.instance
+                      .collection('jobs')
+                      .where('contractorId', isEqualTo: FirebaseAuth.instance.currentUser?.uid)
+                      .snapshots(),
                   Icons.assignment_outlined,
                   const Color(0xFFA5555A),
                 ),
@@ -347,7 +352,6 @@ class _ContractorDashboardState extends State<ContractorDashboard> {
                               ),
                             ),
                           ),
-                        // Match Score Badge
                         Positioned(
                           top: 10,
                           right: 10,
@@ -463,8 +467,8 @@ class _ContractorDashboardState extends State<ContractorDashboard> {
             ),
           ),
         ),
+
         
-        // Active Filters Display
         if (_selectedState != null || _selectedDistrict != null || _selectedProfession != null || _educationFilter.isNotEmpty || _showOnlyShortlisted)
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 8.0),
@@ -783,87 +787,164 @@ class _ContractorDashboardState extends State<ContractorDashboard> {
         }
 
         return ListView.builder(
-          padding: const EdgeInsets.all(16),
-          itemCount: snapshot.data!.docs.length,
-          itemBuilder: (context, index) {
-            final doc = snapshot.data!.docs[index];
-            final data = doc.data() as Map<String, dynamic>;
-            final date = (data['date'] as Timestamp?)?.toDate() ?? DateTime.now();
-            final Map<String, dynamic> required = data['requiredWorkers'] ?? {};
-            final Map<String, dynamic> accepted = data['acceptedWorkers'] ?? {};
-            final String status = data['status'] ?? 'open';
+      padding: const EdgeInsets.all(16),
+      itemCount: snapshot.data!.docs.length,
+      itemBuilder: (context, index) {
+        final doc = snapshot.data!.docs[index];
+        final data = doc.data() as Map<String, dynamic>;
+        final date = (data['date'] as Timestamp?)?.toDate() ?? DateTime.now();
+        final Map<String, dynamic> required = data['requiredWorkers'] ?? {};
+        final Map<String, dynamic> accepted = data['acceptedWorkers'] ?? {};
+        final String status = data['status'] ?? 'open';
 
-            int totalRequired = 0;
-            required.values.forEach((v) => totalRequired += (v as int));
-            int totalAccepted = 0;
-            accepted.values.forEach((v) => totalAccepted += (v as List).length);
+        int totalRequired = 0;
+        required.values.forEach((v) => totalRequired += (v as int));
+        int totalAccepted = 0;
+        accepted.values.forEach((v) => totalAccepted += (v as List).length);
 
-            return Card(
-              margin: const EdgeInsets.only(bottom: 16),
-              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-              child: ExpansionTile(
-                title: Text(data['jobName'] ?? 'Untitled Job', style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 18, color: Color(0xFF0F3A40))),
-                subtitle: Text('Status: ${status.toUpperCase()} • $totalAccepted/$totalRequired joined'),
-                leading: CircleAvatar(
-                  backgroundColor: status == 'open' ? const Color(0xFFA5555A).withOpacity(0.1) : Colors.grey.withOpacity(0.1),
-                  child: Icon(Icons.business_center, color: status == 'open' ? const Color(0xFFA5555A) : Colors.grey),
-                ),
-                children: [
-                  Padding(
-                    padding: const EdgeInsets.all(16.0),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        _buildJobDetailRow('Date', DateFormat('EEE MMM dd yyyy').format(date)),
-                        _buildJobDetailRow('Location', data['address'] ?? 'Not specified'),
-                        const Divider(height: 24),
-                        const Text('Accepted Workers by Profession:', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
-                        const SizedBox(height: 12),
-                        ...required.entries.map((entry) {
-                          final role = entry.key;
-                          final reqCount = entry.value;
-                          final List<dynamic> joinedUids = accepted[role] ?? [];
-                          
-                          return Padding(
-                            padding: const EdgeInsets.only(bottom: 12.0),
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Text('$role ($joinedUids.length/$reqCount)', style: const TextStyle(fontWeight: FontWeight.w600)),
-                                if (joinedUids.isEmpty)
-                                  const Text('  No workers yet', style: TextStyle(color: Colors.grey, fontSize: 13, fontStyle: FontStyle.italic))
-                                else
-                                  ...joinedUids.map((uid) => _buildWorkerNameItem(uid)),
-                              ],
-                            ),
-                          );
-                        }).toList(),
-                        
-                        if (status == 'open') ...[
-                          const SizedBox(height: 16),
-                          SizedBox(
-                            width: double.infinity,
-                            child: ElevatedButton(
-                              onPressed: () => _manualCloseJob(doc.id),
-                              style: ElevatedButton.styleFrom(
-                                backgroundColor: Colors.grey.shade800,
-                                foregroundColor: Colors.white,
-                                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-                              ),
-                              child: const Text('Close Job Manually'),
-                            ),
-                          ),
-                        ],
-                      ],
-                    ),
+        final bool isSelected = _selectedJobIds.contains(doc.id);
+
+        return Card(
+          margin: const EdgeInsets.only(bottom: 16),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(16),
+            side: isSelected ? const BorderSide(color: Color(0xFFA5555A), width: 2) : BorderSide.none,
+          ),
+          child: Column(
+            children: [
+              if (_isDeleteMode)
+                CheckboxListTile(
+                  value: isSelected,
+                  onChanged: (val) {
+                    setState(() {
+                      if (val == true) {
+                        _selectedJobIds.add(doc.id);
+                      } else {
+                        _selectedJobIds.remove(doc.id);
+                      }
+                    });
+                  },
+                  title: Text(data['jobName'] ?? 'Untitled Job', style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 18, color: Color(0xFF0F3A40))),
+                  subtitle: Text('Status: ${status.toUpperCase()} • $totalAccepted/$totalRequired joined'),
+                  activeColor: const Color(0xFFA5555A),
+                  secondary: CircleAvatar(
+                    backgroundColor: status == 'open' ? const Color(0xFFA5555A).withOpacity(0.1) : Colors.grey.withOpacity(0.1),
+                    child: Icon(Icons.business_center, color: status == 'open' ? const Color(0xFFA5555A) : Colors.grey),
                   ),
-                ],
-              ),
-            );
-          },
+                )
+              else
+                ExpansionTile(
+                  title: Text(data['jobName'] ?? 'Untitled Job', style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 18, color: Color(0xFF0F3A40))),
+                  subtitle: Text('Status: ${status.toUpperCase()} • $totalAccepted/$totalRequired joined'),
+                  leading: CircleAvatar(
+                    backgroundColor: status == 'open' ? const Color(0xFFA5555A).withOpacity(0.1) : Colors.grey.withOpacity(0.1),
+                    child: Icon(Icons.business_center, color: status == 'open' ? const Color(0xFFA5555A) : Colors.grey),
+                  ),
+                  children: [
+                    Padding(
+                      padding: const EdgeInsets.all(16.0),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          _buildJobDetailRow('Date', DateFormat('EEE MMM dd yyyy').format(date)),
+                          _buildJobDetailRow('Location', data['address'] ?? 'Not specified'),
+                          const Divider(height: 24),
+                          const Text('Accepted Workers by Profession:', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
+                          const SizedBox(height: 12),
+                          ...required.entries.map((entry) {
+                            final role = entry.key;
+                            final reqCount = entry.value;
+                            final List<dynamic> joinedUids = accepted[role] ?? [];
+                            
+                            return Padding(
+                              padding: const EdgeInsets.only(bottom: 12.0),
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text('$role (${joinedUids.length}/$reqCount)', style: const TextStyle(fontWeight: FontWeight.w600)),
+                                  if (joinedUids.isEmpty)
+                                    const Text('  No workers yet', style: TextStyle(color: Colors.grey, fontSize: 13, fontStyle: FontStyle.italic))
+                                  else
+                                    ...joinedUids.map((uid) => _buildWorkerNameItem(uid)),
+                                ],
+                              ),
+                            );
+                          }).toList(),
+                          
+                          if (status == 'open') ...[
+                            const SizedBox(height: 16),
+                            SizedBox(
+                              width: double.infinity,
+                              child: ElevatedButton(
+                                onPressed: () => _manualCloseJob(doc.id),
+                                style: ElevatedButton.styleFrom(
+                                  backgroundColor: Colors.grey.shade800,
+                                  foregroundColor: Colors.white,
+                                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                                ),
+                                child: const Text('Close Job Manually'),
+                              ),
+                            ),
+                          ],
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+            ],
+          ),
         );
       },
     );
+  },
+);
+}
+
+  Future<void> _deleteSelectedJobs() async {
+    if (_selectedJobIds.isEmpty) return;
+
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text('Delete ${_selectedJobIds.length} Jobs?'),
+        content: const Text('These jobs will be permanently removed. This action cannot be undone.'),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Cancel')),
+          TextButton(
+            onPressed: () => Navigator.pop(context, true), 
+            child: const Text('Delete', style: TextStyle(color: Colors.red, fontWeight: FontWeight.bold))
+          ),
+        ],
+      ),
+    );
+
+    if (confirm == true) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Row(children: [CircularProgressIndicator(strokeWidth: 2), SizedBox(width: 16), Text('Deleting jobs...')]))
+      );
+
+      try {
+        final batch = FirebaseFirestore.instance.batch();
+        for (String id in _selectedJobIds) {
+          batch.delete(FirebaseFirestore.instance.collection('jobs').doc(id));
+        }
+        await batch.commit();
+
+        if (mounted) {
+          setState(() {
+            _isDeleteMode = false;
+            _selectedJobIds.clear();
+          });
+          ScaffoldMessenger.of(context).hideCurrentSnackBar();
+          ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Jobs deleted successfully')));
+        }
+      } catch (e) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).hideCurrentSnackBar();
+          ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Error deleting jobs: $e'), backgroundColor: Colors.red));
+        }
+      }
+    }
   }
 
   Widget _buildWorkerNameItem(String uid) {
@@ -960,131 +1041,6 @@ class _ContractorDashboardState extends State<ContractorDashboard> {
     );
   }
 
-  Widget _buildAlertsView() {
-    final uid = FirebaseAuth.instance.currentUser?.uid;
-    return StreamBuilder<QuerySnapshot>(
-      stream: FirebaseFirestore.instance
-          .collection('notifications')
-          .where('receiverId', isEqualTo: uid)
-          .snapshots(),
-      builder: (context, snapshot) {
-        if (snapshot.hasError) {
-          return Center(child: Text('Error: ${snapshot.error}', style: const TextStyle(color: Colors.red)));
-        }
-        if (snapshot.connectionState == ConnectionState.waiting) {
-          return const Center(child: CircularProgressIndicator());
-        }
-        if (!snapshot.hasData || snapshot.data!.docs.isEmpty) {
-          return Center(
-            child: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                Icon(Icons.notifications_none, size: 64, color: Colors.grey.withOpacity(0.5)),
-                const SizedBox(height: 16),
-                const Text('No alerts yet', style: TextStyle(color: Colors.grey, fontSize: 18)),
-              ],
-            ),
-          );
-        }
-
-        final docs = snapshot.data!.docs;
-        docs.sort((a, b) {
-          final aTime = (a.data() as Map<String, dynamic>)['timestamp'] as Timestamp?;
-          final bTime = (b.data() as Map<String, dynamic>)['timestamp'] as Timestamp?;
-          if (aTime == null || bTime == null) return 0;
-          return bTime.compareTo(aTime);
-        });
-
-        return ListView.builder(
-          padding: const EdgeInsets.all(16),
-          itemCount: docs.length,
-          itemBuilder: (context, index) {
-            final doc = docs[index];
-            final data = doc.data() as Map<String, dynamic>;
-            final timestamp = (data['timestamp'] as Timestamp?)?.toDate() ?? DateTime.now();
-            final timeStr = "${timestamp.hour}:${timestamp.minute.toString().padLeft(2, '0')}";
-
-            return Card(
-              margin: const EdgeInsets.only(bottom: 12),
-              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-              elevation: 0,
-              color: Colors.white,
-              child: Container(
-                decoration: BoxDecoration(
-                  borderRadius: BorderRadius.circular(16),
-                  border: Border.all(color: Colors.grey.shade100),
-                ),
-                child: Column(
-                  children: [
-                    ListTile(
-                      contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                      leading: CircleAvatar(
-                        backgroundColor: const Color(0xFF0F3A40).withOpacity(0.1),
-                        child: Text(
-                          data['senderName']?[0].toUpperCase() ?? 'W',
-                          style: const TextStyle(color: Color(0xFF0F3A40), fontWeight: FontWeight.bold),
-                        ),
-                      ),
-                      title: Row(
-                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                        children: [
-                          Expanded(
-                            child: Text(
-                              data['senderName'] ?? 'Worker', 
-                              style: const TextStyle(fontWeight: FontWeight.bold),
-                              overflow: TextOverflow.ellipsis,
-                            ),
-                          ),
-                          const SizedBox(width: 8),
-                          Text(timeStr, style: const TextStyle(fontSize: 12, color: Colors.grey)),
-                        ],
-                      ),
-                      subtitle: Padding(
-                        padding: const EdgeInsets.only(top: 4.0),
-                        child: Text(data['message'] ?? '', style: const TextStyle(color: Colors.black87)),
-                      ),
-                    ),
-                    Padding(
-                      padding: const EdgeInsets.only(bottom: 12, right: 16),
-                      child: Row(
-                        mainAxisAlignment: MainAxisAlignment.end,
-                        children: [
-                          TextButton.icon(
-                            onPressed: () {
-                              final contractorId = FirebaseAuth.instance.currentUser?.uid ?? '';
-                              final workerId = data['senderId'] ?? '';
-                              if (contractorId.isEmpty || workerId.isEmpty) return;
-
-                              final ids = [contractorId, workerId];
-                              ids.sort();
-                              final chatId = ids.join('_');
-
-                              Navigator.push(
-                                context,
-                                MaterialPageRoute(
-                                  builder: (context) => ChatConversationScreen(
-                                    chatId: chatId,
-                                    otherUserId: workerId,
-                                    otherUserName: data['senderName'] ?? 'Worker',
-                                  ),
-                                ),
-                              );
-                            },
-                            icon: const Icon(Icons.reply, size: 18, color: Color(0xFF0F3A40)),
-                            label: const Text('Respond', style: TextStyle(color: Color(0xFF0F3A40), fontWeight: FontWeight.bold)),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            );
-          },
-        );
-      },
-    );
-  }
   
   Future<void> _toggleShortlist(String workerId, List shortlistedBy) async {
     final uid = FirebaseAuth.instance.currentUser?.uid;
@@ -1274,7 +1230,6 @@ class _ContractorDashboardState extends State<ContractorDashboard> {
       _buildHomeView(),
       _buildWorkersListView(),
       _buildJobsListView(),
-      _buildAlertsView(),
       const ChatsListScreen(),
       _buildProfileView(),
     ];
@@ -1326,9 +1281,76 @@ class _ContractorDashboardState extends State<ContractorDashboard> {
                 ),
                 onPressed: _showFilterSheet,
               ),
-            IconButton(
-              icon: const Icon(Icons.notifications_none_outlined, color: Color(0xFF0F3A40)),
-              onPressed: () => setState(() => _selectedIndex = 3),
+            if (_selectedIndex == 2)
+              _isDeleteMode
+                ? Row(
+                    children: [
+                      if (_selectedJobIds.isNotEmpty)
+                        TextButton(
+                          onPressed: _deleteSelectedJobs,
+                          child: const Text('Delete', style: TextStyle(color: Colors.red, fontWeight: FontWeight.bold)),
+                        ),
+                      IconButton(
+                        icon: const Icon(Icons.close, color: Color(0xFF0F3A40)),
+                        onPressed: () => setState(() {
+                          _isDeleteMode = false;
+                          _selectedJobIds.clear();
+                        }),
+                      ),
+                    ],
+                  )
+                : IconButton(
+                    icon: const Icon(Icons.delete_outline, color: Color(0xFF0F3A40)),
+                    onPressed: () => setState(() => _isDeleteMode = true),
+                  ),
+            StreamBuilder<QuerySnapshot>(
+              stream: FirebaseFirestore.instance
+                  .collection('notifications')
+                  .where('receiverId', isEqualTo: FirebaseAuth.instance.currentUser?.uid)
+                  .where('isRead', isEqualTo: false)
+                  .where('type', isEqualTo: 'job_accepted')
+                  .snapshots(),
+              builder: (context, snapshot) {
+                int count = 0;
+                if (snapshot.hasData) {
+                  count = snapshot.data!.docs.length;
+                }
+                
+                return Stack(
+                  children: [
+                    IconButton(
+                      icon: Icon(
+                        count > 0 ? Icons.notifications_active : Icons.notifications_none_outlined, 
+                        color: const Color(0xFF0F3A40)
+                      ),
+                      onPressed: () {
+                        Navigator.push(
+                          context,
+                          MaterialPageRoute(builder: (context) => ContractorAlertsScreen(contractorName: _userName)),
+                        );
+                      },
+                    ),
+                    if (count > 0)
+                      Positioned(
+                        right: 8,
+                        top: 8,
+                        child: Container(
+                          padding: const EdgeInsets.all(2),
+                          decoration: BoxDecoration(
+                            color: const Color(0xFFA5555A),
+                            borderRadius: BorderRadius.circular(10),
+                          ),
+                          constraints: const BoxConstraints(minWidth: 16, minHeight: 16),
+                          child: Text(
+                            '$count',
+                            style: const TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.bold),
+                            textAlign: TextAlign.center,
+                          ),
+                        ),
+                      ),
+                  ],
+                );
+              }
             ),
           ],
         ),
@@ -1351,11 +1373,6 @@ class _ContractorDashboardState extends State<ContractorDashboard> {
               label: 'Jobs',
             ),
             BottomNavigationBarItem(
-              icon: const Icon(Icons.notifications_outlined),
-              activeIcon: const Icon(Icons.notifications),
-              label: 'Alerts',
-            ),
-            BottomNavigationBarItem(
               icon: const Icon(Icons.chat_bubble_outline),
               activeIcon: const Icon(Icons.chat_bubble),
               label: 'Messages',
@@ -1374,6 +1391,173 @@ class _ContractorDashboardState extends State<ContractorDashboard> {
           type: BottomNavigationBarType.fixed,
         ),
       ),
+    );
+  }
+}
+
+class ContractorAlertsScreen extends StatefulWidget {
+  final String contractorName;
+  const ContractorAlertsScreen({super.key, required this.contractorName});
+
+  @override
+  State<ContractorAlertsScreen> createState() => _ContractorAlertsScreenState();
+}
+
+class _ContractorAlertsScreenState extends State<ContractorAlertsScreen> {
+  List<DocumentSnapshot> _alertsToShow = [];
+  bool _isLoadingAlerts = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _fetchAndMarkAlerts();
+  }
+
+  Future<void> _fetchAndMarkAlerts() async {
+    final uid = FirebaseAuth.instance.currentUser?.uid;
+    if (uid == null) return;
+
+    try {
+      final snapshots = await FirebaseFirestore.instance
+          .collection('notifications')
+          .where('receiverId', isEqualTo: uid)
+          .where('isRead', isEqualTo: false)
+          .where('type', isEqualTo: 'job_accepted')
+          .get();
+
+      if (mounted) {
+        setState(() {
+          _alertsToShow = snapshots.docs;
+          _isLoadingAlerts = false;
+        });
+      }
+
+      if (snapshots.docs.isNotEmpty) {
+        final batch = FirebaseFirestore.instance.batch();
+        for (var doc in snapshots.docs) {
+          batch.update(doc.reference, {'isRead': true});
+        }
+        await batch.commit();
+      }
+    } catch (e) {
+      debugPrint("Error fetching alerts: $e");
+      if (mounted) setState(() => _isLoadingAlerts = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: const Color(0xFFFBFBFC),
+      appBar: AppBar(
+        title: const Text('New Alerts', style: TextStyle(fontWeight: FontWeight.bold, color: Color(0xFF0F3A40))),
+        backgroundColor: Colors.white,
+        elevation: 0,
+        leading: IconButton(
+          icon: const Icon(Icons.arrow_back, color: Color(0xFF0F3A40)),
+          onPressed: () => Navigator.pop(context),
+        ),
+      ),
+      body: _isLoadingAlerts
+          ? const Center(child: CircularProgressIndicator())
+          : _alertsToShow.isEmpty
+              ? Center(
+                  child: Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      Icon(Icons.notifications_none, size: 64, color: Colors.grey.withOpacity(0.5)),
+                      const SizedBox(height: 16),
+                      const Text('No new alerts', style: TextStyle(color: Colors.grey, fontSize: 18)),
+                    ],
+                  ),
+                )
+              : ListView.builder(
+                  padding: const EdgeInsets.all(16),
+                  itemCount: _alertsToShow.length,
+                  itemBuilder: (context, index) {
+                    final doc = _alertsToShow[index];
+                    final data = doc.data() as Map<String, dynamic>;
+                    final timestamp = (data['timestamp'] as Timestamp?)?.toDate() ?? DateTime.now();
+                    final timeStr = "${timestamp.hour}:${timestamp.minute.toString().padLeft(2, '0')}";
+
+                    return Card(
+                      margin: const EdgeInsets.only(bottom: 12),
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                      elevation: 0,
+                      color: Colors.white,
+                      child: Container(
+                        decoration: BoxDecoration(
+                          borderRadius: BorderRadius.circular(16),
+                          border: Border.all(color: Colors.grey.shade100),
+                        ),
+                        child: Column(
+                          children: [
+                            ListTile(
+                              contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                              leading: CircleAvatar(
+                                backgroundColor: const Color(0xFF0F3A40).withOpacity(0.1),
+                                child: Text(
+                                  data['senderName']?[0].toUpperCase() ?? 'W',
+                                  style: const TextStyle(color: Color(0xFF0F3A40), fontWeight: FontWeight.bold),
+                                ),
+                              ),
+                              title: Row(
+                                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                children: [
+                                  Expanded(
+                                    child: Text(
+                                      data['senderName'] ?? 'Worker',
+                                      style: const TextStyle(fontWeight: FontWeight.bold),
+                                      overflow: TextOverflow.ellipsis,
+                                    ),
+                                  ),
+                                  const SizedBox(width: 8),
+                                  Text(timeStr, style: const TextStyle(fontSize: 12, color: Colors.grey)),
+                                ],
+                              ),
+                              subtitle: Padding(
+                                padding: const EdgeInsets.only(top: 4.0),
+                                child: Text(data['message'] ?? '', style: const TextStyle(color: Colors.black87)),
+                              ),
+                            ),
+                            Padding(
+                              padding: const EdgeInsets.only(bottom: 12, right: 16),
+                              child: Row(
+                                mainAxisAlignment: MainAxisAlignment.end,
+                                children: [
+                                  TextButton.icon(
+                                    onPressed: () {
+                                      final contractorId = FirebaseAuth.instance.currentUser?.uid ?? '';
+                                      final workerId = data['senderId'] ?? '';
+                                      if (contractorId.isEmpty || workerId.isEmpty) return;
+
+                                      final ids = [contractorId, workerId];
+                                      ids.sort();
+                                      final chatId = ids.join('_');
+
+                                      Navigator.push(
+                                        context,
+                                        MaterialPageRoute(
+                                          builder: (context) => ChatConversationScreen(
+                                            chatId: chatId,
+                                            otherUserId: workerId,
+                                            otherUserName: data['senderName'] ?? 'Worker',
+                                          ),
+                                        ),
+                                      );
+                                    },
+                                    icon: const Icon(Icons.reply, size: 18, color: Color(0xFF0F3A40)),
+                                    label: const Text('Respond', style: TextStyle(color: Color(0xFF0F3A40), fontWeight: FontWeight.bold)),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    );
+                  },
+                ),
     );
   }
 }

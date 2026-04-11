@@ -1,6 +1,10 @@
+import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:image_picker/image_picker.dart';
+import 'package:cached_network_image/cached_network_image.dart';
+import 'services/storage_service.dart';
 import 'profile_sections/personal_info_screen.dart';
 import 'profile_sections/skills_certificates_screen.dart';
 import 'profile_sections/work_history_screen.dart';
@@ -17,8 +21,11 @@ class WorkerProfileScreen extends StatefulWidget {
 class _WorkerProfileScreenState extends State<WorkerProfileScreen> {
   String _name = "...";
   String _email = "...";
+  String? _profileImageUrl;
+  bool _isUploading = false;
   double _rating = 4.9;
   int _reviewsCount = 42;
+  final StorageService _storageService = StorageService();
 
   @override
   void initState() {
@@ -32,10 +39,12 @@ class _WorkerProfileScreenState extends State<WorkerProfileScreen> {
       _email = user.email ?? "...";
       final doc = await FirebaseFirestore.instance.collection('users').doc(user.uid).get();
       if (doc.exists) {
-        setState(() {
-          _name = doc.get('name') ?? "Worker Name";
-          // Rating and reviews could also be fetched here
-        });
+        if (mounted) {
+          setState(() {
+            _name = doc.get('name') ?? "Worker Name";
+            _profileImageUrl = doc.data()?.containsKey('profileImageUrl') == true ? doc.get('profileImageUrl') : null;
+          });
+        }
       }
     }
   }
@@ -51,10 +60,49 @@ class _WorkerProfileScreenState extends State<WorkerProfileScreen> {
             padding: const EdgeInsets.symmetric(horizontal: 20),
             child: Row(
               children: [
-                CircleAvatar(
-                  radius: 45,
-                  backgroundColor: Colors.blue.shade100,
-                  child: const Icon(Icons.person, size: 50, color: Colors.blue),
+                Stack(
+                  children: [
+                    GestureDetector(
+                      onTap: _pickAndUploadImage,
+                      child: CircleAvatar(
+                        radius: 45,
+                        backgroundColor: Colors.blue.shade100,
+                        backgroundImage: _profileImageUrl != null
+                            ? CachedNetworkImageProvider(_profileImageUrl!)
+                            : null,
+                        child: _profileImageUrl == null
+                            ? const Icon(Icons.person, size: 50, color: Colors.blue)
+                            : null,
+                      ),
+                    ),
+                    if (_isUploading)
+                      Positioned.fill(
+                        child: Container(
+                          decoration: BoxDecoration(
+                            color: Colors.black26,
+                            borderRadius: BorderRadius.circular(45),
+                          ),
+                          child: const Center(
+                            child: CircularProgressIndicator(color: Colors.white),
+                          ),
+                        ),
+                      ),
+                    Positioned(
+                      bottom: 0,
+                      right: 0,
+                      child: GestureDetector(
+                        onTap: _pickAndUploadImage,
+                        child: Container(
+                          padding: const EdgeInsets.all(4),
+                          decoration: const BoxDecoration(
+                            color: Colors.blue,
+                            shape: BoxShape.circle,
+                          ),
+                          child: const Icon(Icons.edit, size: 16, color: Colors.white),
+                        ),
+                      ),
+                    ),
+                  ],
                 ),
                 const SizedBox(width: 20),
                 Expanded(
@@ -179,5 +227,44 @@ class _WorkerProfileScreenState extends State<WorkerProfileScreen> {
         ),
       ),
     );
+  }
+
+  Future<void> _pickAndUploadImage() async {
+    if (_isUploading) return;
+
+    final ImagePicker picker = ImagePicker();
+    final XFile? image = await picker.pickImage(
+      source: ImageSource.gallery,
+      imageQuality: 70,
+    );
+
+    if (image != null) {
+      if (mounted) setState(() => _isUploading = true);
+      
+      final user = FirebaseAuth.instance.currentUser;
+      if (user != null) {
+        final String? downloadUrl = await _storageService.uploadProfileImage(File(image.path), user.uid);
+        if (downloadUrl != null) {
+          if (mounted) {
+            setState(() {
+              _profileImageUrl = downloadUrl;
+            });
+          }
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(content: Text('Profile image updated successfully!')),
+            );
+          }
+        } else {
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(content: Text('Failed to upload image.')),
+            );
+          }
+        }
+      }
+      
+      if (mounted) setState(() => _isUploading = false);
+    }
   }
 }
