@@ -3,7 +3,6 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:intl/intl.dart';
 import 'package:geolocator/geolocator.dart';
-import 'send_message_screen.dart';
 import 'post_job_screen.dart';
 import 'worker_details_screen.dart';
 import 'contractor_profile_screen.dart';
@@ -12,6 +11,9 @@ import 'role_selection_screen.dart';
 import 'package:provider/provider.dart';
 import 'app_state.dart';
 import 'services/recommendation_engine.dart';
+import 'data/india_data.dart';
+import 'chats_list_screen.dart';
+import 'chat_conversation_screen.dart';
 
 class ContractorDashboard extends StatefulWidget {
   final int initialIndex;
@@ -36,13 +38,24 @@ class _ContractorDashboardState extends State<ContractorDashboard> {
   List<String> _preferredSkills = [];
   bool _isFetchingLocation = false;
 
-  // Filter State
   String _searchQuery = "";
-  String _locationFilter = "";
   String _educationFilter = "";
-  String _professionFilter = "";
   bool _showOnlyShortlisted = false;
   final TextEditingController _searchController = TextEditingController();
+
+  // Advanced Dropdown Filter State
+  String? _selectedState;
+  String? _selectedDistrict;
+  String? _selectedProfession;
+
+  final List<String> _professionsList = [
+    'Plumber', 'Electrician', 'Carpenter', 'Mason (bricklayer)', 'Painter',
+    'Welder', 'Mechanic (automobile technician)', 'AC Technician (HVAC technician)',
+    'Roofer', 'Tiler (tile installer)', 'Plasterer', 'Blacksmith',
+    'Construction Laborer', 'Interior Designer', 'Glass Installer (glazier)',
+    'Locksmith', 'Solar Panel Installer', 'Elevator Technician',
+    'Cable Technician (internet/TV wiring)'
+  ];
 
   Future<void> _fetchUserName() async {
     final uid = FirebaseAuth.instance.currentUser?.uid;
@@ -243,7 +256,7 @@ class _ContractorDashboardState extends State<ContractorDashboard> {
                 return const Center(child: Text('No workers registered yet.', style: TextStyle(color: Colors.grey)));
               }
               
-              // Map and calculate scores for each worker
+              // Map, calculate scores, and filter for high-relevance matches (40%+)
               var workerScores = snapshot.data!.docs.map((doc) {
                 final data = doc.data() as Map<String, dynamic>;
                 data['uid'] = doc.id;
@@ -272,7 +285,7 @@ class _ContractorDashboardState extends State<ContractorDashboard> {
                   'score': score,
                   'distance': distance,
                 };
-              }).toList();
+              }).where((entry) => (entry['score'] as double) >= 0.4).toList();
 
               // Sort by highest score
               workerScores.sort((a, b) => (b['score'] as double).compareTo(a['score'] as double));
@@ -451,8 +464,8 @@ class _ContractorDashboardState extends State<ContractorDashboard> {
           ),
         ),
         
-        // Active Filters Display (Optional but nice)
-        if (_locationFilter.isNotEmpty || _educationFilter.isNotEmpty || _showOnlyShortlisted)
+        // Active Filters Display
+        if (_selectedState != null || _selectedDistrict != null || _selectedProfession != null || _educationFilter.isNotEmpty || _showOnlyShortlisted)
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 8.0),
             child: SingleChildScrollView(
@@ -469,12 +482,33 @@ class _ContractorDashboardState extends State<ContractorDashboard> {
                         deleteIconColor: Colors.white,
                       ),
                     ),
-                  if (_locationFilter.isNotEmpty)
+                  if (_selectedState != null)
                     Padding(
                       padding: const EdgeInsets.only(right: 8.0),
                       child: Chip(
-                        label: Text('Near: $_locationFilter', style: const TextStyle(fontSize: 12)),
-                        onDeleted: () => setState(() => _locationFilter = ""),
+                        label: Text(_selectedState!, style: const TextStyle(fontSize: 12)),
+                        onDeleted: () => setState(() {
+                          _selectedState = null;
+                          _selectedDistrict = null;
+                        }),
+                      ),
+                    ),
+                  if (_selectedDistrict != null)
+                    Padding(
+                      padding: const EdgeInsets.only(right: 8.0),
+                      child: Chip(
+                        label: Text(_selectedDistrict!, style: const TextStyle(fontSize: 12)),
+                        onDeleted: () => setState(() {
+                          _selectedDistrict = null;
+                        }),
+                      ),
+                    ),
+                  if (_selectedProfession != null)
+                    Padding(
+                      padding: const EdgeInsets.only(right: 8.0),
+                      child: Chip(
+                        label: Text(_selectedProfession!, style: const TextStyle(fontSize: 12)),
+                        onDeleted: () => setState(() => _selectedProfession = null),
                       ),
                     ),
                   if (_educationFilter.isNotEmpty)
@@ -510,6 +544,8 @@ class _ContractorDashboardState extends State<ContractorDashboard> {
                 final name = (data['name'] ?? '').toString().toLowerCase();
                 final address = (data['address'] ?? '').toString().toLowerCase();
                 final education = (data['education'] ?? '').toString().toLowerCase();
+                final workerState = (data['state'] ?? '').toString().toLowerCase();
+                final workerDistrict = (data['district'] ?? '').toString().toLowerCase();
                 final List<dynamic> skills = data['skills'] ?? [];
                 final List<dynamic> shortlistedBy = data['shortlistedBy'] ?? [];
                 
@@ -519,16 +555,21 @@ class _ContractorDashboardState extends State<ContractorDashboard> {
                                     address.contains(_searchQuery.toLowerCase()) ||
                                     skills.any((s) => s.toString().toLowerCase().contains(_searchQuery.toLowerCase()));
                 
-                // 2. Location Filter
-                bool matchesLocation = _locationFilter.isEmpty || address.contains(_locationFilter.toLowerCase());
+                // 2. State & District Filter
+                bool matchesState = _selectedState == null || workerState == _selectedState!.toLowerCase();
+                bool matchesDistrict = _selectedDistrict == null || workerDistrict == _selectedDistrict!.toLowerCase();
 
-                // 3. Education Filter
+                // 3. Profession Filter
+                bool matchesProfession = _selectedProfession == null || 
+                                         skills.any((s) => s.toString().toLowerCase().contains(_selectedProfession!.toLowerCase()));
+
+                // 4. Education Filter
                 bool matchesEducation = _educationFilter.isEmpty || education.contains(_educationFilter.toLowerCase());
 
-                // 4. Shortlisted Filter
+                // 5. Shortlisted Filter
                 bool matchesShortlist = !_showOnlyShortlisted || shortlistedBy.contains(uid);
 
-                return matchesSearch && matchesLocation && matchesEducation && matchesShortlist;
+                return matchesSearch && matchesState && matchesDistrict && matchesProfession && matchesEducation && matchesShortlist;
               }).toList();
 
               if (workers.isEmpty) {
@@ -1011,14 +1052,20 @@ class _ContractorDashboardState extends State<ContractorDashboard> {
                           TextButton.icon(
                             onPressed: () {
                               final contractorId = FirebaseAuth.instance.currentUser?.uid ?? '';
+                              final workerId = data['senderId'] ?? '';
+                              if (contractorId.isEmpty || workerId.isEmpty) return;
+
+                              final ids = [contractorId, workerId];
+                              ids.sort();
+                              final chatId = ids.join('_');
+
                               Navigator.push(
                                 context,
                                 MaterialPageRoute(
-                                  builder: (context) => SendMessageScreen(
-                                    recipientName: data['senderName'] ?? 'Worker',
-                                    senderName: _userName,
-                                    recipientId: data['senderId'] ?? '',
-                                    senderId: contractorId,
+                                  builder: (context) => ChatConversationScreen(
+                                    chatId: chatId,
+                                    otherUserId: workerId,
+                                    otherUserName: data['senderName'] ?? 'Worker',
                                   ),
                                 ),
                               );
@@ -1066,6 +1113,8 @@ class _ContractorDashboardState extends State<ContractorDashboard> {
       backgroundColor: Colors.transparent,
       builder: (context) => StatefulBuilder(
         builder: (context, setModalState) {
+          final List<String> districts = _selectedState != null ? (indiaMapData[_selectedState] ?? []) : [];
+          
           return Container(
             decoration: const BoxDecoration(
               color: Colors.white,
@@ -1077,69 +1126,140 @@ class _ContractorDashboardState extends State<ContractorDashboard> {
               left: 24,
               right: 24,
             ),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                  children: [
-                    const Text('Advanced Filters', style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold, color: Color(0xFF0F3A40))),
-                    TextButton(
-                      onPressed: () {
-                        setState(() {
-                          _locationFilter = "";
-                          _educationFilter = "";
-                          _showOnlyShortlisted = false;
-                        });
-                        Navigator.pop(context);
-                      },
-                      child: const Text('Reset All', style: TextStyle(color: Colors.red)),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 24),
-                const Text('Location', style: TextStyle(fontWeight: FontWeight.bold, color: Colors.grey)),
-                TextField(
-                  onChanged: (v) => setState(() => _locationFilter = v),
-                  decoration: const InputDecoration(hintText: 'e.g., New York, Bronx'),
-                  controller: TextEditingController(text: _locationFilter),
-                ),
-                const SizedBox(height: 24),
-                const Text('Education', style: TextStyle(fontWeight: FontWeight.bold, color: Colors.grey)),
-                TextField(
-                  onChanged: (v) => setState(() => _educationFilter = v),
-                  decoration: const InputDecoration(hintText: 'e.g., Bachelors, High School'),
-                  controller: TextEditingController(text: _educationFilter),
-                ),
-                const SizedBox(height: 24),
-                SwitchListTile(
-                  title: const Text('Show Only Shortlisted Workers', style: TextStyle(fontWeight: FontWeight.bold, color: Color(0xFF0F3A40))),
-                  subtitle: const Text('View your saved/starred workers'),
-                  value: _showOnlyShortlisted,
-                  activeColor: Colors.amber,
-                  onChanged: (val) {
-                    setState(() => _showOnlyShortlisted = val);
-                    setModalState(() {});
-                  },
-                ),
-                const SizedBox(height: 32),
-                SizedBox(
-                  width: double.infinity,
-                  child: ElevatedButton(
-                    onPressed: () => Navigator.pop(context),
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: const Color(0xFF0F3A40),
-                      padding: const EdgeInsets.symmetric(vertical: 16),
-                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                    ),
-                    child: const Text('Apply Filters', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+            child: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      const Text('Workers Filter', style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold, color: Color(0xFF0F3A40))),
+                      TextButton(
+                        onPressed: () {
+                          setState(() {
+                            _selectedState = null;
+                            _selectedDistrict = null;
+                            _selectedProfession = null;
+                            _educationFilter = "";
+                            _showOnlyShortlisted = false;
+                          });
+                          Navigator.pop(context);
+                        },
+                        child: const Text('Reset All', style: TextStyle(color: Colors.red)),
+                      ),
+                    ],
                   ),
-                ),
-              ],
+                  const SizedBox(height: 24),
+                  
+                  const Text('State', style: TextStyle(fontWeight: FontWeight.bold, color: Colors.grey)),
+                  const SizedBox(height: 8),
+                  DropdownButtonFormField<String>(
+                    value: _selectedState,
+                    isExpanded: true,
+                    decoration: InputDecoration(
+                      filled: true,
+                      fillColor: Colors.grey.shade50,
+                      border: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide.none),
+                    ),
+                    hint: const Text('Select State'),
+                    items: indiaMapData.keys.map((s) => DropdownMenuItem(value: s, child: Text(s))).toList(),
+                    onChanged: (val) {
+                      setState(() {
+                        _selectedState = val;
+                        _selectedDistrict = null;
+                      });
+                      setModalState(() {});
+                    },
+                  ),
+                  
+                  const SizedBox(height: 20),
+                  const Text('District', style: TextStyle(fontWeight: FontWeight.bold, color: Colors.grey)),
+                  const SizedBox(height: 8),
+                  DropdownButtonFormField<String>(
+                    value: _selectedDistrict,
+                    isExpanded: true,
+                    decoration: InputDecoration(
+                      filled: true,
+                      fillColor: Colors.grey.shade50,
+                      border: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide.none),
+                    ),
+                    hint: const Text('Select District'),
+                    disabledHint: const Text('Select State first'),
+                    items: (_selectedState != null ? (indiaMapData[_selectedState] ?? []) : [])
+                        .map<DropdownMenuItem<String>>((d) => DropdownMenuItem<String>(value: d, child: Text(d))).toList(),
+                    onChanged: _selectedState == null ? null : (val) {
+                      setState(() {
+                        _selectedDistrict = val;
+                      });
+                      setModalState(() {});
+                    },
+                  ),
+
+
+                  const SizedBox(height: 20),
+                  const Text('Profession', style: TextStyle(fontWeight: FontWeight.bold, color: Colors.grey)),
+                  const SizedBox(height: 8),
+                  DropdownButtonFormField<String>(
+                    value: _selectedProfession,
+                    isExpanded: true,
+                    decoration: InputDecoration(
+                      filled: true,
+                      fillColor: Colors.grey.shade50,
+                      border: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide.none),
+                    ),
+                    hint: const Text('Select Profession'),
+                    items: _professionsList.map((p) => DropdownMenuItem(value: p, child: Text(p, style: const TextStyle(fontSize: 14)))).toList(),
+                    onChanged: (val) {
+                      setState(() => _selectedProfession = val);
+                      setModalState(() {});
+                    },
+                  ),
+
+                  const SizedBox(height: 20),
+                  const Text('Education', style: TextStyle(fontWeight: FontWeight.bold, color: Colors.grey)),
+                  const SizedBox(height: 8),
+                  TextField(
+                    onChanged: (v) => setState(() => _educationFilter = v),
+                    decoration: InputDecoration(
+                      hintText: 'e.g., Bachelors, Diploma',
+                      filled: true,
+                      fillColor: Colors.grey.shade50,
+                      border: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide.none),
+                    ),
+                    controller: TextEditingController(text: _educationFilter),
+                  ),
+
+                  const SizedBox(height: 24),
+                  SwitchListTile(
+                    contentPadding: EdgeInsets.zero,
+                    title: const Text('Shortlisted Only', style: TextStyle(fontWeight: FontWeight.bold, color: Color(0xFF0F3A40))),
+                    subtitle: const Text('Show only starred workers'),
+                    value: _showOnlyShortlisted,
+                    activeColor: Colors.amber,
+                    onChanged: (val) {
+                      setState(() => _showOnlyShortlisted = val);
+                      setModalState(() {});
+                    },
+                  ),
+                  const SizedBox(height: 32),
+                  SizedBox(
+                    width: double.infinity,
+                    child: ElevatedButton(
+                      onPressed: () => Navigator.pop(context),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: const Color(0xFF0F3A40),
+                        padding: const EdgeInsets.symmetric(vertical: 16),
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                      ),
+                      child: const Text('Apply Filters', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 16)),
+                    ),
+                  ),
+                ],
+              ),
             ),
           );
-        }
+        },
       ),
     );
   }
@@ -1155,6 +1275,7 @@ class _ContractorDashboardState extends State<ContractorDashboard> {
       _buildWorkersListView(),
       _buildJobsListView(),
       _buildAlertsView(),
+      const ChatsListScreen(),
       _buildProfileView(),
     ];
 
@@ -1198,7 +1319,7 @@ class _ContractorDashboardState extends State<ContractorDashboard> {
             if (_selectedIndex == 1)
               IconButton(
                 icon: Icon(
-                  (_locationFilter.isNotEmpty || _educationFilter.isNotEmpty || _showOnlyShortlisted) 
+                  (_selectedState != null || _selectedDistrict != null || _selectedProfession != null || _educationFilter.isNotEmpty || _showOnlyShortlisted) 
                     ? Icons.filter_alt 
                     : Icons.filter_alt_outlined, 
                   color: const Color(0xFF0F3A40)
@@ -1233,6 +1354,11 @@ class _ContractorDashboardState extends State<ContractorDashboard> {
               icon: const Icon(Icons.notifications_outlined),
               activeIcon: const Icon(Icons.notifications),
               label: 'Alerts',
+            ),
+            BottomNavigationBarItem(
+              icon: const Icon(Icons.chat_bubble_outline),
+              activeIcon: const Icon(Icons.chat_bubble),
+              label: 'Messages',
             ),
             BottomNavigationBarItem(
               icon: const Icon(Icons.person_outline),

@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:intl/intl.dart';
+import 'chat_conversation_screen.dart';
 
 class JobDetailsWorkerScreen extends StatefulWidget {
   final Map<String, dynamic> jobData;
@@ -201,8 +202,12 @@ class _JobDetailsWorkerScreenState extends State<JobDetailsWorkerScreen> {
             const Divider(height: 48),
             
             _buildInfoSection(Icons.calendar_today_outlined, 'Date', DateFormat('EEEE, MMM dd, yyyy').format(date)),
+            if (widget.jobData['startTime'] != null && widget.jobData['endTime'] != null)
+              _buildInfoSection(Icons.access_time_outlined, 'Working Hours', '${widget.jobData['startTime']} - ${widget.jobData['endTime']}'),
             _buildInfoSection(Icons.location_on_outlined, 'Location', widget.jobData['address'] ?? 'Not provided'),
             _buildInfoSection(Icons.phone_outlined, 'Contact', widget.jobData['phoneNumber'] ?? 'Not provided'),
+            if (widget.jobData['contractorMessage'] != null && widget.jobData['contractorMessage'].toString().isNotEmpty)
+              _buildInfoSection(Icons.message_outlined, 'Message from Contractor', widget.jobData['contractorMessage']),
             
             const SizedBox(height: 32),
             const Text('Required Professions', style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: Color(0xFF0F3A40))),
@@ -231,6 +236,49 @@ class _JobDetailsWorkerScreenState extends State<JobDetailsWorkerScreen> {
                 ),
               );
             }).toList(),
+            
+            const SizedBox(height: 24),
+            SizedBox(
+              width: double.infinity,
+              child: OutlinedButton.icon(
+                onPressed: () {
+                  final contractorId = widget.jobData['contractorId'] ?? widget.jobData['constructorId'];
+                  if (contractorId != null) {
+                    final contractorName = widget.jobData['contractorName'] ?? widget.jobData['constructorName'] ?? 'Contractor';
+                    
+                    // Create chat ID by sorting
+                    final uid = FirebaseAuth.instance.currentUser?.uid;
+                    if (uid == null) return;
+                    
+                    final ids = [uid, contractorId];
+                    ids.sort();
+                    final chatId = ids.join('_');
+
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (context) => ChatConversationScreen(
+                          chatId: chatId,
+                          otherUserId: contractorId,
+                          otherUserName: contractorName,
+                        ),
+                      ),
+                    );
+                  } else {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(content: Text('Could not find contractor ID.')),
+                    );
+                  }
+                },
+                icon: const Icon(Icons.message_outlined, color: Color(0xFF0F3A40)),
+                label: const Text('Message Contractor', style: TextStyle(color: Color(0xFF0F3A40), fontSize: 16, fontWeight: FontWeight.bold)),
+                style: OutlinedButton.styleFrom(
+                  padding: const EdgeInsets.symmetric(vertical: 16),
+                  side: const BorderSide(color: Color(0xFF0F3A40), width: 2),
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                ),
+              ),
+            ),
             
             const SizedBox(height: 48),
             if (alreadyJoined)

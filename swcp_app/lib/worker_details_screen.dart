@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:url_launcher/url_launcher.dart';
-import 'send_message_screen.dart';
+import 'chat_conversation_screen.dart';
 import 'post_job_screen.dart';
 import 'direct_post_job_screen.dart';
 import 'package:firebase_auth/firebase_auth.dart';
@@ -149,14 +149,20 @@ class WorkerDetailsScreen extends StatelessWidget {
                         child: ElevatedButton.icon(
                           onPressed: () {
                             final contractorId = FirebaseAuth.instance.currentUser?.uid ?? '';
+                            final workerId = workerData['uid'] ?? '';
+                            if (contractorId.isEmpty || workerId.isEmpty) return;
+
+                            final ids = [contractorId, workerId];
+                            ids.sort();
+                            final chatId = ids.join('_');
+
                             Navigator.push(
                               context,
                               MaterialPageRoute(
-                                builder: (context) => SendMessageScreen(
-                                  recipientName: workerData['name'] ?? 'Worker',
-                                  senderName: contractorName,
-                                  recipientId: workerData['uid'] ?? '',
-                                  senderId: contractorId,
+                                builder: (context) => ChatConversationScreen(
+                                  chatId: chatId,
+                                  otherUserId: workerId,
+                                  otherUserName: workerData['name'] ?? 'Worker',
                                 ),
                               ),
                             );

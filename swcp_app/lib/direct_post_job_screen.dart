@@ -23,7 +23,14 @@ class _DirectPostJobScreenState extends State<DirectPostJobScreen> {
   final TextEditingController _districtController = TextEditingController();
   
   DateTime _selectedDate = DateTime.now();
-  final List<String> _professions = ['Electrician', 'Plumber', 'Carpenter', 'Painter', 'Mason', 'Laborer'];
+  final List<String> _professions = [
+    'Plumber', 'Electrician', 'Carpenter', 'Mason (bricklayer)', 'Painter',
+    'Welder', 'Mechanic (automobile technician)', 'AC Technician (HVAC technician)',
+    'Roofer', 'Tiler (tile installer)', 'Plasterer', 'Blacksmith',
+    'Construction Laborer', 'Interior Designer', 'Glass Installer (glazier)',
+    'Locksmith', 'Solar Panel Installer', 'Elevator Technician',
+    'Cable Technician (internet/TV wiring)'
+  ];
   final Map<String, int> _selectedWorkers = {};
   final Set<String> _autoDetectedSkills = {};
   bool _isLoading = false;
@@ -56,8 +63,9 @@ class _DirectPostJobScreenState extends State<DirectPostJobScreen> {
         if (!isMatch) {
           if (profLower == "carpenter" && skill.contains("carpentr")) isMatch = true;
           if (profLower == "painter" && skill.contains("paint")) isMatch = true;
-          if (profLower == "laborer" && (skill.contains("labor") || skill.contains("labour"))) isMatch = true;
-          if (profLower == "mason" && skill.contains("mason")) isMatch = true;
+          if (profLower.contains("laborer") && (skill.contains("labor") || skill.contains("labour"))) isMatch = true;
+          if (profLower.contains("mason") && skill.contains("mason")) isMatch = true;
+          if (profLower.contains("ac technician") && (skill.contains("hvac") || skill.contains("air condition"))) isMatch = true;
         }
 
         if (isMatch) {
@@ -77,8 +85,10 @@ class _DirectPostJobScreenState extends State<DirectPostJobScreen> {
     if (uid != null) {
       final doc = await FirebaseFirestore.instance.collection('users').doc(uid).get();
       if (doc.exists && mounted) {
+        final data = doc.data();
         setState(() {
-          _contractorNameController.text = doc.get('name') ?? "";
+          _contractorNameController.text = data?['name'] ?? "";
+          _phoneNumberController.text = data?['phone'] ?? "";
         });
       }
     }
@@ -153,9 +163,6 @@ class _DirectPostJobScreenState extends State<DirectPostJobScreen> {
         'contractorName': _contractorNameController.text.trim(),
         'phoneNumber': _phoneNumberController.text.trim(),
         'address': _addressController.text.trim(),
-        'country': _countryController.text.trim(),
-        'state': _stateController.text.trim(),
-        'district': _districtController.text.trim(),
         'date': Timestamp.fromDate(_selectedDate),
         'requiredWorkers': _selectedWorkers,
         'acceptedWorkers': _selectedWorkers.map((key, value) => MapEntry(key, [])),
@@ -259,9 +266,6 @@ class _DirectPostJobScreenState extends State<DirectPostJobScreen> {
               _buildTextField(_contractorNameController, 'Contractor Name'),
               _buildTextField(_phoneNumberController, 'Phone Number', keyboardType: TextInputType.phone),
               _buildTextField(_addressController, 'Construction Address', maxLines: 2),
-              _buildTextField(_countryController, 'Country'),
-              _buildTextField(_stateController, 'State'),
-              _buildTextField(_districtController, 'District'),
               
               const SizedBox(height: 16),
               const Text('Job Date', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16, color: Color(0xFF0F3A40))),

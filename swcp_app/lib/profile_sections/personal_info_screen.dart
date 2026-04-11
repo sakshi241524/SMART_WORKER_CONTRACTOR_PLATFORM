@@ -1,8 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
-import 'package:geolocator/geolocator.dart';
-import 'package:geocoding/geocoding.dart';
+import '../data/india_data.dart';
 
 class PersonalInfoScreen extends StatefulWidget {
   const PersonalInfoScreen({super.key});
@@ -20,11 +19,12 @@ class _PersonalInfoScreenState extends State<PersonalInfoScreen> {
   final TextEditingController _addressController = TextEditingController();
   final TextEditingController _educationController = TextEditingController();
   final TextEditingController _dobController = TextEditingController();
-  final TextEditingController _localAddrController = TextEditingController();
-  final TextEditingController _permAddrController = TextEditingController();
+
+  // Tiered Address State
+  String? _selectedState;
+  String? _selectedDistrict;
 
   bool _isLoading = false;
-  Position? _currentPosition;
 
   @override
   void initState() {
@@ -45,52 +45,13 @@ class _PersonalInfoScreenState extends State<PersonalInfoScreen> {
         _addressController.text = data['address'] ?? "";
         _educationController.text = data['education'] ?? "";
         _dobController.text = data['dob'] ?? "";
-        _localAddrController.text = data['local_address'] ?? "";
-        _permAddrController.text = data['permanent_address'] ?? "";
-        if (data['latitude'] != null && data['longitude'] != null) {
-          _currentPosition = Position(
-            latitude: data['latitude'],
-            longitude: data['longitude'],
-            timestamp: DateTime.now(),
-            accuracy: 0,
-            altitude: 0,
-            heading: 0,
-            speed: 0,
-            speedAccuracy: 0,
-            altitudeAccuracy: 0,
-            headingAccuracy: 0,
-          );
-        }
+        _selectedState = data['state'];
+        _selectedDistrict = data['district'];
       }
     }
     if (mounted) setState(() => _isLoading = false);
   }
 
-  Future<void> _getCurrentLocation() async {
-    setState(() => _isLoading = true);
-    try {
-      LocationPermission permission = await Geolocator.checkPermission();
-      if (permission == LocationPermission.denied) {
-        permission = await Geolocator.requestPermission();
-      }
-
-      if (permission == LocationPermission.always || permission == LocationPermission.whileInUse) {
-        Position position = await Geolocator.getCurrentPosition(desiredAccuracy: LocationAccuracy.high);
-        _currentPosition = position;
-        List<Placemark> placemarks = await placemarkFromCoordinates(position.latitude, position.longitude);
-        if (placemarks.isNotEmpty) {
-          Placemark place = placemarks[0];
-          String address = "${place.street}, ${place.subLocality}, ${place.locality}, ${place.postalCode}, ${place.country}";
-          setState(() {
-            _addressController.text = address;
-          });
-        }
-      }
-    } catch (e) {
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Error fetching location: $e")));
-    }
-    if (mounted) setState(() => _isLoading = false);
-  }
 
   Future<void> _saveData() async {
     if (_formKey.currentState!.validate()) {
@@ -103,10 +64,8 @@ class _PersonalInfoScreenState extends State<PersonalInfoScreen> {
             'address': _addressController.text.trim(),
             'education': _educationController.text.trim(),
             'dob': _dobController.text.trim(),
-            'local_address': _localAddrController.text.trim(),
-            'permanent_address': _permAddrController.text.trim(),
-            'latitude': _currentPosition?.latitude,
-            'longitude': _currentPosition?.longitude,
+            'state': _selectedState,
+            'district': _selectedDistrict,
           }, SetOptions(merge: true));
           
           if (mounted) {
@@ -154,15 +113,18 @@ class _PersonalInfoScreenState extends State<PersonalInfoScreen> {
                   const SizedBox(height: 15),
                   _buildTextField("Phone Number", _phoneController, Icons.phone, keyboardType: TextInputType.phone),
                   const SizedBox(height: 15),
-                  _buildAddressField(),
-                  const SizedBox(height: 15),
                   _buildTextField("Education", _educationController, Icons.school),
                   const SizedBox(height: 15),
                   _buildTextField("Birth Date", _dobController, Icons.calendar_today, hint: "DD/MM/YYYY"),
+                  const SizedBox(height: 25),
+                  
+                  const Text("Address Information", style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Colors.blueGrey)),
                   const SizedBox(height: 15),
-                  _buildTextField("Local Address", _localAddrController, Icons.home_outlined),
+                  _buildFullAddressSummary(),
                   const SizedBox(height: 15),
-                  _buildTextField("Permanent Address", _permAddrController, Icons.location_on_outlined),
+                  _buildAddressField(), // Specific place and takula (Block 1)
+                  const SizedBox(height: 15),
+                  _buildCascadingAddressFields(), // State, District (Blocks 2, 3)
                   const SizedBox(height: 30),
                   SizedBox(
                     width: double.infinity,
@@ -228,26 +190,103 @@ class _PersonalInfoScreenState extends State<PersonalInfoScreen> {
       children: [
         TextFormField(
           controller: _addressController,
-          maxLines: 2,
+          maxLines: 1,
           decoration: InputDecoration(
-            labelText: "Address",
-            prefixIcon: const Icon(Icons.map_outlined, color: Color(0xFF0F3A40)),
-            suffixIcon: IconButton(
-              icon: const Icon(Icons.my_location, color: Colors.blue),
-              onPressed: _getCurrentLocation,
-              tooltip: "Use current location",
-            ),
+            labelText: "Specific place and takula",
+            hintText: "e.g. Near Bus Stand, Baramati",
+            prefixIcon: const Icon(Icons.location_on, color: Color(0xFF0F3A40)),
             border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
             filled: true,
             fillColor: Colors.white,
           ),
+          onChanged: (v) => setState(() {}),
           validator: (value) {
-            if (value == null || value.isEmpty) return "Please enter Address";
+            if (value == null || value.isEmpty) return "Please enter landmark";
             return null;
           },
         ),
-        const SizedBox(height: 5),
-        const Text("Tap the GPS icon to fetch address automatically using Maps API", style: TextStyle(fontSize: 12, color: Colors.blueGrey, fontStyle: FontStyle.italic)),
+      ],
+    );
+  }
+
+  Widget _buildFullAddressSummary() {
+    String fullAddress = "";
+    if (_addressController.text.isNotEmpty) fullAddress += "${_addressController.text}, ";
+    if (_selectedDistrict != null) fullAddress += "$_selectedDistrict, ";
+    if (_selectedState != null) fullAddress += _selectedState!;
+    
+    // Remove trailing comma/space if any
+    if (fullAddress.endsWith(", ")) fullAddress = fullAddress.substring(0, fullAddress.length - 2);
+
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: const Color(0xFF0F3A40).withOpacity(0.05),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: const Color(0xFF0F3A40).withOpacity(0.1)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text("Full Address Preview", style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: Color(0xFF0F3A40))),
+          const SizedBox(height: 4),
+          Text(
+            fullAddress.isEmpty ? "Complete the fields below..." : fullAddress,
+            style: TextStyle(
+              fontSize: 14, 
+              color: fullAddress.isEmpty ? Colors.grey : const Color(0xFF0F3A40),
+              fontWeight: FontWeight.w500
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildCascadingAddressFields() {
+    final List<String> districts = _selectedState != null ? (indiaMapData[_selectedState] ?? []) : [];
+
+    return Column(
+      children: [
+        // State Selection
+        DropdownButtonFormField<String>(
+          value: _selectedState,
+          isExpanded: true,
+          decoration: InputDecoration(
+            labelText: "Select State",
+            prefixIcon: const Icon(Icons.map, color: Color(0xFF0F3A40)),
+            border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+          ),
+          hint: const Text("Select State"),
+          items: indiaMapData.keys.map((s) => DropdownMenuItem(value: s, child: Text(s))).toList(),
+          onChanged: (val) {
+            setState(() {
+              _selectedState = val;
+              _selectedDistrict = null;
+            });
+          },
+        ),
+        const SizedBox(height: 15),
+
+        // District Selection
+        DropdownButtonFormField<String>(
+          value: _selectedDistrict,
+          isExpanded: true,
+          decoration: InputDecoration(
+            labelText: "Select District",
+            prefixIcon: const Icon(Icons.location_city, color: Color(0xFF0F3A40)),
+            border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+          ),
+          hint: const Text("Select District"),
+          disabledHint: const Text("Select State first"),
+          items: districts.map((d) => DropdownMenuItem(value: d, child: Text(d))).toList(),
+          onChanged: _selectedState == null ? null : (val) {
+            setState(() {
+              _selectedDistrict = val;
+            });
+          },
+        ),
       ],
     );
   }

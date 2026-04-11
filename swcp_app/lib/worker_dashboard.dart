@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
-import 'send_message_screen.dart';
+import 'chat_conversation_screen.dart';
 import 'worker_details_screen.dart';
 import 'worker_profile_screen.dart';
 import 'job_details_worker_screen.dart';
@@ -9,6 +9,8 @@ import 'role_selection_screen.dart';
 import 'package:provider/provider.dart';
 import 'app_state.dart';
 import 'services/job_ranking_engine.dart';
+import 'package:geolocator/geolocator.dart';
+import 'chats_list_screen.dart';
 
 class WorkerDashboard extends StatefulWidget {
   final int initialIndex;
@@ -24,6 +26,8 @@ class _WorkerDashboardState extends State<WorkerDashboard> {
   List<String> _workerSkills = [];
   bool _isWorkerActive = true;
   bool _isUpdating = false;
+  bool _isSharingLocation = false;
+  String? _locationStatus;
 
   @override
   void initState() {
@@ -35,6 +39,7 @@ class _WorkerDashboardState extends State<WorkerDashboard> {
   Future<void> _loadInitialData() async {
     await _fetchUserAndStatus();
     await _refreshHeartbeat();
+    await _updateCurrentLocation();
   }
 
   Future<void> _refreshHeartbeat() async {
@@ -43,6 +48,57 @@ class _WorkerDashboardState extends State<WorkerDashboard> {
       FirebaseFirestore.instance.collection('users').doc(uid).update({
         'lastSeen': FieldValue.serverTimestamp(),
       }).catchError((e) => debugPrint("Heartbeat error: $e"));
+    }
+  }
+
+  Future<void> _updateCurrentLocation() async {
+    setState(() {
+      _isSharingLocation = true;
+      _locationStatus = "Updating location...";
+    });
+
+    try {
+      LocationPermission permission = await Geolocator.checkPermission();
+      if (permission == LocationPermission.denied) {
+        permission = await Geolocator.requestPermission();
+      }
+
+      if (permission == LocationPermission.deniedForever) {
+        setState(() {
+          _isSharingLocation = false;
+          _locationStatus = "Location denied";
+        });
+        return;
+      }
+
+      if (permission == LocationPermission.always || permission == LocationPermission.whileInUse) {
+        Position position = await Geolocator.getCurrentPosition(
+          desiredAccuracy: LocationAccuracy.medium,
+        );
+
+        final uid = FirebaseAuth.instance.currentUser?.uid;
+        if (uid != null) {
+          await FirebaseFirestore.instance.collection('users').doc(uid).update({
+            'latitude': position.latitude,
+            'longitude': position.longitude,
+            'lastSeen': FieldValue.serverTimestamp(),
+          });
+          if (mounted) {
+            setState(() {
+              _isSharingLocation = true;
+              _locationStatus = "Location active (10km)";
+            });
+          }
+        }
+      }
+    } catch (e) {
+      debugPrint("Error sharing location: $e");
+      if (mounted) {
+        setState(() {
+          _isSharingLocation = false;
+          _locationStatus = "Location error";
+        });
+      }
     }
   }
 
@@ -93,7 +149,8 @@ class _WorkerDashboardState extends State<WorkerDashboard> {
       case 0: return 'Dashboard';
       case 1: return 'Jobs';
       case 2: return 'Alerts';
-      case 3: return 'Settings';
+      case 3: return 'Messages';
+      case 4: return 'Settings';
       default: return "Worker Dashboard";
     }
   }
@@ -140,9 +197,23 @@ class _WorkerDashboardState extends State<WorkerDashboard> {
                     Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        const Text(
-                          'Your Status',
-                          style: TextStyle(color: Colors.white70, fontSize: 16),
+                        Row(
+                          children: [
+                            const Text(
+                              'Your Status',
+                              style: TextStyle(color: Colors.white70, fontSize: 16),
+                            ),
+                            const SizedBox(width: 8),
+                            if (_isSharingLocation) ...[
+                              const Icon(Icons.location_on, size: 12, color: Colors.greenAccent),
+                              const SizedBox(width: 4),
+                              Text(_locationStatus ?? "Live", style: const TextStyle(color: Colors.greenAccent, fontSize: 10, fontWeight: FontWeight.bold)),
+                            ] else if (_locationStatus != null) ...[
+                              const Icon(Icons.location_off, size: 12, color: Colors.amberAccent),
+                              const SizedBox(width: 4),
+                              Text(_locationStatus!, style: const TextStyle(color: Colors.amberAccent, fontSize: 10)),
+                            ],
+                          ],
                         ),
                         const SizedBox(height: 8),
                         Text(
@@ -222,6 +293,17 @@ class _WorkerDashboardState extends State<WorkerDashboard> {
                 
                 final jobScores = snapshot.data!.docs.map((doc) {
                   final data = doc.data() as Map<String, dynamic>;
+                  final List<dynamic> rejectedBy = data['rejectedBy'] is List ? data['rejectedBy'] : [];
+                  final Map<String, dynamic> accepted = data['acceptedWorkers'] is Map ? data['acceptedWorkers'] : {};
+                  
+                  // Check if this specific worker has rejected this job
+                  if (rejectedBy.contains(uid)) return null;
+
+                  // Check if already joined
+                  bool alreadyJoined = false;
+                  accepted.values.forEach((list) {
+                    if (list is List && list.contains(uid)) alreadyJoined = true;
+                  });
                   if (alreadyJoined) return null;
                   
                   final targetId = data['targetWorkerId'];
@@ -466,6 +548,7 @@ class _WorkerDashboardState extends State<WorkerDashboard> {
       _buildHomeView(),
       _buildMyJobsView(),
       _buildAlertsView(),
+      const ChatsListScreen(),
       const WorkerProfileScreen(),
     ];
 
@@ -508,11 +591,17 @@ class _WorkerDashboardState extends State<WorkerDashboard> {
           backgroundColor: Colors.white,
           elevation: 0,
           actions: [
-            if (_isUpdating)
+            if (_isUpdating || _locationStatus == "Updating location...")
               const Center(child: Padding(
                 padding: EdgeInsets.symmetric(horizontal: 16.0),
                 child: SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2, color: Color(0xFF0F3A40))),
               )),
+            if (_locationStatus == "Location denied" || _locationStatus == "Location error")
+              IconButton(
+                icon: const Icon(Icons.location_off, color: Colors.red),
+                onPressed: _updateCurrentLocation,
+                tooltip: "Enable Location Access",
+              ),
           ],
         ),
         body: widgetOptions.elementAt(_selectedIndex),
@@ -532,6 +621,11 @@ class _WorkerDashboardState extends State<WorkerDashboard> {
               icon: const Icon(Icons.notifications_outlined),
               activeIcon: const Icon(Icons.notifications),
               label: 'Alerts',
+            ),
+            BottomNavigationBarItem(
+              icon: const Icon(Icons.chat_bubble_outline),
+              activeIcon: const Icon(Icons.chat_bubble),
+              label: 'Messages',
             ),
             BottomNavigationBarItem(
               icon: const Icon(Icons.settings_outlined),
@@ -586,7 +680,6 @@ class _WorkerDashboardState extends State<WorkerDashboard> {
           
           if (status != 'open') return null;
 
-          final targetId = data['targetWorkerId'];
           final List<dynamic> targetedIds = data['targetedWorkerIds'] is List ? data['targetedWorkerIds'] : [];
           
           // Targeted Dispatch Logic
@@ -741,14 +834,20 @@ class _WorkerDashboardState extends State<WorkerDashboard> {
                           TextButton.icon(
                             onPressed: () {
                               final workerId = FirebaseAuth.instance.currentUser?.uid ?? '';
+                              final contractorId = data['senderId'] ?? data['contractorId'] ?? '';
+                              if (workerId.isEmpty || contractorId.isEmpty) return;
+
+                              final ids = [workerId, contractorId];
+                              ids.sort();
+                              final chatId = ids.join('_');
+
                               Navigator.push(
                                 context,
                                 MaterialPageRoute(
-                                  builder: (context) => SendMessageScreen(
-                                    recipientName: data['senderName'] ?? data['contractorName'] ?? 'Contractor',
-                                    senderName: _userName,
-                                    recipientId: data['senderId'] ?? data['contractorId'] ?? '',
-                                    senderId: workerId,
+                                  builder: (context) => ChatConversationScreen(
+                                    chatId: chatId,
+                                    otherUserId: contractorId,
+                                    otherUserName: data['senderName'] ?? data['contractorName'] ?? 'Contractor',
                                   ),
                                 ),
                               );

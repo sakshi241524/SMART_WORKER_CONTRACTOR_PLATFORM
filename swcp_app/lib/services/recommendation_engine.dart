@@ -28,8 +28,8 @@ class RecommendationEngine {
       );
       double distanceInKm = distanceInMeters / 1000;
       
-      // Decay function: 1.0 at 0km, 0.0 at 50km
-      proximityScore = max(0, 1.0 - (distanceInKm / 50.0));
+      // Decay function: 1.0 at 0km, 0.0 at 10km
+      proximityScore = max(0, 1.0 - (distanceInKm / 10.0));
     }
 
     // 2. Skill Match Score (40% weight)
@@ -123,28 +123,8 @@ class RecommendationEngine {
 
         if (!hasSkill) continue;
 
-        // 2. Location Match (District string match OR Proximity)
-        bool isNearby = false;
-        
-        // Exact district match
-        if (district.isNotEmpty && workerDistrict.isNotEmpty && 
-            (workerDistrict.contains(district.toLowerCase()) || district.toLowerCase().contains(workerDistrict))) {
-          isNearby = true;
-        } 
-        // Or if coordinates are available, check 20km radius
-        else if (contractorLat != null && contractorLng != null && 
-                 data['latitude'] != null && data['longitude'] != null) {
-          double dist = Geolocator.distanceBetween(
-            contractorLat, contractorLng, 
-            data['latitude'], data['longitude']
-          ) / 1000;
-          
-          if (dist <= 20) isNearby = true; 
-        }
-
-        if (isNearby) {
-          targetIds.add(doc.id);
-        }
+        // Removed location matching as requested by user. Any active worker with a matching skill receives the job.
+        targetIds.add(doc.id);
       }
     } catch (e) {
       // Use print in static context if debugPrint isn't available, but here we assume common Flutter env

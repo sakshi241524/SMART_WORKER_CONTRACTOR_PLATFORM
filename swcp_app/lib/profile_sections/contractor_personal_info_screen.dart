@@ -4,6 +4,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:geocoding/geocoding.dart';
 import 'package:url_launcher/url_launcher.dart';
+import '../data/india_data.dart';
 
 class ContractorPersonalInfoScreen extends StatefulWidget {
   const ContractorPersonalInfoScreen({super.key});
@@ -27,6 +28,10 @@ class _ContractorPersonalInfoScreenState extends State<ContractorPersonalInfoScr
   bool _isLoading = false;
   Position? _currentPosition;
 
+  // Tiered Address State
+  String? _selectedState;
+  String? _selectedDistrict;
+
   @override
   void initState() {
     super.initState();
@@ -46,6 +51,8 @@ class _ContractorPersonalInfoScreenState extends State<ContractorPersonalInfoScr
         _addressController.text = data['address'] ?? "";
         _educationController.text = data['education'] ?? "";
         _dobController.text = data['dob'] ?? "";
+        _selectedState = data['state'];
+        _selectedDistrict = data['district'];
         _tempAddrController.text = data['temp_address'] ?? "";
         _permAddrController.text = data['permanent_address'] ?? "";
         if (data['latitude'] != null && data['longitude'] != null) {
@@ -135,6 +142,8 @@ class _ContractorPersonalInfoScreenState extends State<ContractorPersonalInfoScr
             'address': _addressController.text.trim(),
             'education': _educationController.text.trim(),
             'dob': _dobController.text.trim(),
+            'state': _selectedState,
+            'district': _selectedDistrict,
             'temp_address': _tempAddrController.text.trim(),
             'permanent_address': _permAddrController.text.trim(),
             'latitude': _currentPosition?.latitude,
@@ -186,15 +195,15 @@ class _ContractorPersonalInfoScreenState extends State<ContractorPersonalInfoScr
                   const SizedBox(height: 15),
                   _buildTextField("Phone Number", _phoneController, Icons.phone, keyboardType: TextInputType.phone),
                   const SizedBox(height: 15),
-                  _buildAddressField(),
+                  _buildFullAddressSummary(),
+                  const SizedBox(height: 15),
+                  _buildAddressField(), // Specific place and takula
+                  const SizedBox(height: 15),
+                  _buildCascadingAddressFields(), // State, District
                   const SizedBox(height: 15),
                   _buildTextField("Education", _educationController, Icons.school),
                   const SizedBox(height: 15),
                   _buildDatePickerField(),
-                  const SizedBox(height: 15),
-                  _buildTextField("Temporary Address", _tempAddrController, Icons.home_outlined, maxLines: 2),
-                  const SizedBox(height: 15),
-                  _buildTextField("Permanent Address", _permAddrController, Icons.location_on_outlined, maxLines: 2),
                   const SizedBox(height: 30),
                   SizedBox(
                     width: double.infinity,
@@ -277,42 +286,104 @@ class _ContractorPersonalInfoScreenState extends State<ContractorPersonalInfoScr
     );
   }
 
-  Widget _buildAddressField() {
+  Widget _buildFullAddressSummary() {
+    String fullAddress = "";
+    if (_addressController.text.isNotEmpty) fullAddress += "${_addressController.text}, ";
+    if (_selectedDistrict != null) fullAddress += "$_selectedDistrict, ";
+    if (_selectedState != null) fullAddress += _selectedState!;
+    
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: const Color(0xFF0F3A40).withOpacity(0.05),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: const Color(0xFF0F3A40).withOpacity(0.1)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Row(
+            children: [
+              Icon(Icons.info_outline, size: 16, color: Color(0xFF0F3A40)),
+              SizedBox(width: 8),
+              Text("Full Address Preview", style: TextStyle(fontWeight: FontWeight.bold, color: Color(0xFF0F3A40))),
+            ],
+          ),
+          const SizedBox(height: 8),
+          Text(
+            fullAddress.isEmpty ? "Incomplete address" : fullAddress,
+            style: TextStyle(color: fullAddress.isEmpty ? Colors.grey : Colors.black87),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildCascadingAddressFields() {
+    final List<String> districts = _selectedState != null ? (indiaMapData[_selectedState] ?? []) : [];
+
     return Column(
       children: [
-        TextFormField(
-          controller: _addressController,
-          maxLines: 2,
+        // State Selection
+        DropdownButtonFormField<String>(
+          value: _selectedState,
+          isExpanded: true,
           decoration: InputDecoration(
-            labelText: "Address",
-            prefixIcon: const Icon(Icons.map_outlined, color: Color(0xFF0F3A40)),
-            suffixIcon: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                IconButton(
-                  icon: const Icon(Icons.my_location, color: Colors.blue),
-                  onPressed: _getCurrentLocation,
-                  tooltip: "Fetch current location",
-                ),
-                IconButton(
-                  icon: const Icon(Icons.open_in_new, color: Colors.green),
-                  onPressed: _openMap,
-                  tooltip: "View on Map",
-                ),
-              ],
-            ),
+            labelText: "Select State",
+            prefixIcon: const Icon(Icons.map, color: Color(0xFF0F3A40)),
             border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
-            filled: true,
-            fillColor: Colors.white,
           ),
-          validator: (value) {
-            if (value == null || value.isEmpty) return "Please enter Address";
-            return null;
+          hint: const Text("Select State"),
+          items: indiaMapData.keys.map((s) => DropdownMenuItem(value: s, child: Text(s))).toList(),
+          onChanged: (val) {
+            setState(() {
+              _selectedState = val;
+              _selectedDistrict = null;
+            });
           },
         ),
-        const SizedBox(height: 5),
-        const Text("Use GPS icon to fetch address, or Map icon to visualize it", style: TextStyle(fontSize: 12, color: Colors.blueGrey, fontStyle: FontStyle.italic)),
+        const SizedBox(height: 15),
+
+        // District Selection
+        DropdownButtonFormField<String>(
+          value: _selectedDistrict,
+          isExpanded: true,
+          decoration: InputDecoration(
+            labelText: "Select District",
+            prefixIcon: const Icon(Icons.location_city, color: Color(0xFF0F3A40)),
+            border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+          ),
+          hint: const Text("Select District"),
+          disabledHint: const Text("Select State first"),
+          items: districts.map((d) => DropdownMenuItem(value: d, child: Text(d))).toList(),
+          onChanged: _selectedState == null ? null : (val) {
+            setState(() {
+              _selectedDistrict = val;
+            });
+          },
+        ),
       ],
+    );
+  }
+
+  Widget _buildAddressField() {
+    return TextFormField(
+      controller: _addressController,
+      maxLines: 1,
+      decoration: InputDecoration(
+        labelText: "Specific place and takula",
+        hintText: "e.g. Office No 4, Baramati",
+        prefixIcon: const Icon(Icons.location_on, color: Color(0xFF0F3A40)),
+        border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+        filled: true,
+        fillColor: Colors.white,
+      ),
+      onChanged: (v) => setState(() {}),
+      validator: (value) {
+        if (value == null || value.isEmpty) return "Please enter address details";
+        return null;
+      },
     );
   }
 }

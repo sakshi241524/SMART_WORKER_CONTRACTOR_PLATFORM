@@ -13,7 +13,27 @@ class SkillsCertificatesScreen extends StatefulWidget {
 }
 
 class _SkillsCertificatesScreenState extends State<SkillsCertificatesScreen> {
-  final List<String> _suggestedSkills = ["Plumber", "Electrician", "Painter", "Carpenter", "Mason", "Welder", "Gardener", "Cleaner"];
+  final List<String> _suggestedSkills = [
+    "Plumber", 
+    "Electrician", 
+    "Carpenter", 
+    "Mason (bricklayer)", 
+    "Painter", 
+    "Welder", 
+    "Mechanic (automobile technician)", 
+    "AC Technician (HVAC technician)", 
+    "Roofer", 
+    "Tiler (tile installer)", 
+    "Plasterer", 
+    "Blacksmith", 
+    "Construction Laborer", 
+    "Interior Designer", 
+    "Glass Installer (glazier)", 
+    "Locksmith", 
+    "Solar Panel Installer", 
+    "Elevator Technician", 
+    "Cable Technician (internet/TV wiring)"
+  ];
   final List<String> _mySkills = [];
   final List<String> _certificates = [];
   bool _isLoading = false;
