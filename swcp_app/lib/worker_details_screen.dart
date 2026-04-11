@@ -112,7 +112,16 @@ class WorkerDetailsScreen extends StatelessWidget {
                   const SizedBox(height: 12),
                   _buildInfoTile(Icons.phone_outlined, 'Phone Number', workerData['phone'] ?? 'Not provided'),
                   _buildInfoTile(Icons.email_outlined, 'Email Address', workerData['email'] ?? 'Not provided'),
-                  _buildInfoTile(Icons.location_on_outlined, 'Address', workerData['address'] ?? 'Not provided'),
+                  _buildInfoTile(
+                    Icons.location_on_outlined, 
+                    'Address', 
+                    [
+                      workerData['address'],
+                      workerData['district'],
+                      workerData['state'],
+                      workerData['country']
+                    ].where((e) => e != null && e.toString().isNotEmpty).join(', ') ?? 'Not provided'
+                  ),
                   
                   const SizedBox(height: 32),
                   _buildSectionTitle('Educational Background'),

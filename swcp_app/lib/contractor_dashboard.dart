@@ -11,7 +11,7 @@ import 'direct_post_job_screen.dart';
 import 'role_selection_screen.dart';
 import 'package:provider/provider.dart';
 import 'app_state.dart';
-import 'app_state.dart';
+import 'services/recommendation_engine.dart';
 
 class ContractorDashboard extends StatefulWidget {
   final int initialIndex;
@@ -33,6 +33,16 @@ class _ContractorDashboardState extends State<ContractorDashboard> {
   String _userName = "...";
   double? _contractorLat;
   double? _contractorLng;
+  List<String> _preferredSkills = [];
+  bool _isFetchingLocation = false;
+
+  // Filter State
+  String _searchQuery = "";
+  String _locationFilter = "";
+  String _educationFilter = "";
+  String _professionFilter = "";
+  bool _showOnlyShortlisted = false;
+  final TextEditingController _searchController = TextEditingController();
 
   Future<void> _fetchUserName() async {
     final uid = FirebaseAuth.instance.currentUser?.uid;
@@ -44,7 +54,72 @@ class _ContractorDashboardState extends State<ContractorDashboard> {
           _contractorLat = doc.data()?['latitude'];
           _contractorLng = doc.data()?['longitude'];
         });
+        
+        // If location is missing from Firestore, try to fetch it once
+        if (_contractorLat == null || _contractorLng == null) {
+          _fetchCurrentLocation();
+        }
+        
+        // Fetch preferred skills from recent jobs
+        _fetchPreferredSkills();
       }
+    }
+  }
+
+  Future<void> _fetchCurrentLocation() async {
+    if (_isFetchingLocation) return;
+    setState(() => _isFetchingLocation = true);
+    
+    try {
+      LocationPermission permission = await Geolocator.checkPermission();
+      if (permission == LocationPermission.denied) {
+        permission = await Geolocator.requestPermission();
+      }
+
+      if (permission == LocationPermission.always || permission == LocationPermission.whileInUse) {
+        Position position = await Geolocator.getCurrentPosition(desiredAccuracy: LocationAccuracy.low);
+        if (mounted) {
+          setState(() {
+            _contractorLat = position.latitude;
+            _contractorLng = position.longitude;
+            _isFetchingLocation = false;
+          });
+        }
+      } else {
+        if (mounted) setState(() => _isFetchingLocation = false);
+      }
+    } catch (e) {
+      debugPrint("Error fetching dashboard location: $e");
+      if (mounted) setState(() => _isFetchingLocation = false);
+    }
+  }
+
+  Future<void> _fetchPreferredSkills() async {
+    final uid = FirebaseAuth.instance.currentUser?.uid;
+    if (uid == null) return;
+
+    try {
+      final jobsSnap = await FirebaseFirestore.instance
+          .collection('jobs')
+          .where('contractorId', isEqualTo: uid)
+          .limit(10) // Look at last 10 jobs for preferences
+          .get();
+
+      if (jobsSnap.docs.isNotEmpty) {
+        Set<String> skills = {};
+        for (var doc in jobsSnap.docs) {
+          final data = doc.data();
+          final Map<String, dynamic> required = data['requiredWorkers'] ?? {};
+          skills.addAll(required.keys);
+        }
+        if (mounted) {
+          setState(() {
+            _preferredSkills = skills.toList();
+          });
+        }
+      }
+    } catch (e) {
+      debugPrint("Error fetching preferred skills: $e");
     }
   }
 
@@ -131,10 +206,22 @@ class _ContractorDashboardState extends State<ContractorDashboard> {
           mainAxisAlignment: MainAxisAlignment.spaceBetween,
           children: [
             Expanded(
-              child: const Text(
-                'Nearby Workers (AI Recommended)', 
-                style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Color(0xFF0F3A40)),
-                overflow: TextOverflow.ellipsis,
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text(
+                    'Smart Recommendations', 
+                    style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Color(0xFF0F3A40)),
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                  if (_isFetchingLocation)
+                    const Text('Updating your location...', style: TextStyle(fontSize: 10, color: Colors.blue, fontStyle: FontStyle.italic))
+                  else if (_contractorLat == null)
+                    InkWell(
+                      onTap: _fetchCurrentLocation,
+                      child: const Text('Tap to set location for better matches', style: TextStyle(fontSize: 10, color: Color(0xFFA5555A), decoration: TextDecoration.underline))
+                    ),
+                ],
               ),
             ),
             TextButton(
@@ -145,7 +232,7 @@ class _ContractorDashboardState extends State<ContractorDashboard> {
         ),
         const SizedBox(height: 10),
         SizedBox(
-          height: 200,
+          height: 220,
           child: StreamBuilder<QuerySnapshot>(
             stream: FirebaseFirestore.instance.collection('users').where('role', isEqualTo: 'Worker').snapshots(),
             builder: (context, snapshot) {
@@ -155,106 +242,169 @@ class _ContractorDashboardState extends State<ContractorDashboard> {
               if (!snapshot.hasData || snapshot.data!.docs.isEmpty) {
                 return const Center(child: Text('No workers registered yet.', style: TextStyle(color: Colors.grey)));
               }
-
-              // Filter proximity locally if contractor coordinates exist
-              var workers = snapshot.data!.docs.map((doc) {
+              
+              // Map and calculate scores for each worker
+              var workerScores = snapshot.data!.docs.map((doc) {
                 final data = doc.data() as Map<String, dynamic>;
                 data['uid'] = doc.id;
+                
+                final double score = RecommendationEngine.calculateMatchScore(
+                  contractorLat: _contractorLat,
+                  contractorLng: _contractorLng,
+                  workerLat: data['latitude'],
+                  workerLng: data['longitude'],
+                  workerSkills: List<String>.from(data['skills'] ?? []),
+                  preferredSkills: _preferredSkills,
+                  workerStatus: data['status'] ?? 'active',
+                  lastSeen: data['lastSeen'],
+                );
+
                 double distance = -1;
                 if (_contractorLat != null && _contractorLng != null && data['latitude'] != null && data['longitude'] != null) {
                   distance = Geolocator.distanceBetween(
                     _contractorLat!, _contractorLng!, 
                     data['latitude']!, data['longitude']!
-                  ) / 1000; // to KM
+                  ) / 1000;
                 }
-                return {'data': data, 'distance': distance};
+
+                return {
+                  'data': data,
+                  'score': score,
+                  'distance': distance,
+                };
               }).toList();
 
-              // Only show those within 25km (AI logic) or show all if coords missing but sort by distance
-              if (_contractorLat != null) {
-                workers = workers.where((w) => (w['distance'] as double) <= 25 && (w['distance'] as double) != -1).toList();
-                workers.sort((a, b) => (a['distance'] as double).compareTo(b['distance'] as double));
-              }
+              // Sort by highest score
+              workerScores.sort((a, b) => (b['score'] as double).compareTo(a['score'] as double));
 
-              if (workers.isEmpty) {
-                return const Center(child: Text('No workers within 25km radius.', style: TextStyle(color: Colors.grey)));
-              }
+              // Take top 10
+              final topWorkers = workerScores.take(10).toList();
 
               return ListView.builder(
                 scrollDirection: Axis.horizontal,
-                itemCount: workers.length,
+                itemCount: topWorkers.length,
                 itemBuilder: (context, index) {
-                  final worker = workers[index]['data'] as Map<String, dynamic>;
-                  final distance = workers[index]['distance'] as double;
+                  final worker = topWorkers[index]['data'] as Map<String, dynamic>;
+                  final double score = topWorkers[index]['score'] as double;
+                  final double distance = topWorkers[index]['distance'] as double;
+                  final String matchLevel = RecommendationEngine.getMatchLevel(score);
+                  
+                  // Check if worker was seen in the last 5 minutes for "Live" pulse
+                  bool isLive = false;
+                  if (worker['lastSeen'] != null) {
+                    DateTime lastSeenDate;
+                    if (worker['lastSeen'] is Timestamp) {
+                      lastSeenDate = (worker['lastSeen'] as Timestamp).toDate();
+                    } else {
+                      lastSeenDate = worker['lastSeen'] as DateTime;
+                    }
+                    if (DateTime.now().difference(lastSeenDate).inMinutes <= 5 && worker['status'] == 'active') {
+                      isLive = true;
+                    }
+                  }
 
                   return Container(
-                    width: 160,
-                    margin: const EdgeInsets.only(right: 15),
+                    width: 170,
+                    margin: const EdgeInsets.only(right: 15, bottom: 8),
                     decoration: BoxDecoration(
                       color: Colors.white,
                       borderRadius: BorderRadius.circular(20),
                       boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.05), blurRadius: 10, offset: const Offset(0, 4))],
                     ),
-                    child: Column(
-                      mainAxisAlignment: MainAxisAlignment.center,
+                    child: Stack(
                       children: [
-                        CircleAvatar(
-                          radius: 30,
-                          backgroundColor: const Color(0xFF0F3A40).withOpacity(0.1),
-                          child: Text(
-                            (worker['name'] != null && worker['name'].toString().isNotEmpty) ? worker['name'][0].toUpperCase() : 'W',
-                            style: const TextStyle(fontWeight: FontWeight.bold, color: Color(0xFF0F3A40)),
-                          ),
-                        ),
-                        const SizedBox(height: 10),
-                        Text(worker['name'] ?? 'Worker', textAlign: TextAlign.center, style: const TextStyle(fontWeight: FontWeight.bold), maxLines: 1, overflow: TextOverflow.ellipsis),
-                        const SizedBox(height: 4),
-                        Row(
-                          mainAxisAlignment: MainAxisAlignment.center,
-                          children: [
-                            Container(
-                              width: 8,
-                              height: 8,
+                        // Live Pulse Indicator
+                        if (isLive)
+                          Positioned(
+                            top: 12,
+                            left: 12,
+                            child: Container(
+                              width: 10,
+                              height: 10,
                               decoration: BoxDecoration(
-                                color: (worker['status'] == 'active' || worker['status'] == null) ? Colors.green : Colors.grey,
+                                color: Colors.green,
                                 shape: BoxShape.circle,
+                                boxShadow: [
+                                  BoxShadow(
+                                    color: Colors.green.withOpacity(0.5),
+                                    blurRadius: 5,
+                                    spreadRadius: 2,
+                                  )
+                                ],
                               ),
                             ),
-                            const SizedBox(width: 4),
-                            Text(
-                              (worker['status'] == 'active' || worker['status'] == null) ? 'Active' : 'Inactive',
+                          ),
+                        // Match Score Badge
+                        Positioned(
+                          top: 10,
+                          right: 10,
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                            decoration: BoxDecoration(
+                              color: score >= 0.7 ? Colors.green.shade50 : (score >= 0.4 ? Colors.amber.shade50 : Colors.grey.shade50),
+                              borderRadius: BorderRadius.circular(8),
+                              border: Border.all(color: score >= 0.7 ? Colors.green : (score >= 0.4 ? Colors.amber : Colors.grey), width: 1),
+                            ),
+                            child: Text(
+                              '${(score * 100).toInt()}%',
                               style: TextStyle(
                                 fontSize: 10, 
-                                color: (worker['status'] == 'active' || worker['status'] == null) ? Colors.green : Colors.grey,
-                                fontWeight: FontWeight.bold
+                                fontWeight: FontWeight.bold,
+                                color: score >= 0.7 ? Colors.green : (score >= 0.4 ? Colors.amber.shade900 : Colors.grey.shade700)
+                              ),
+                            ),
+                          ),
+                        ),
+                        Column(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            const SizedBox(height: 15),
+                            CircleAvatar(
+                              radius: 30,
+                              backgroundColor: const Color(0xFF0F3A40).withOpacity(0.1),
+                              child: Text(
+                                (worker['name'] != null && worker['name'].toString().isNotEmpty) ? worker['name'][0].toUpperCase() : 'W',
+                                style: const TextStyle(fontWeight: FontWeight.bold, color: Color(0xFF0F3A40)),
+                              ),
+                            ),
+                            const SizedBox(height: 8),
+                            Text(worker['name'] ?? 'Worker', textAlign: TextAlign.center, style: const TextStyle(fontWeight: FontWeight.bold), maxLines: 1, overflow: TextOverflow.ellipsis),
+                            Text(matchLevel, style: TextStyle(fontSize: 10, color: Colors.grey.shade600, fontStyle: FontStyle.italic)),
+                            const SizedBox(height: 4),
+                            Row(
+                              mainAxisAlignment: MainAxisAlignment.center,
+                              children: [
+                                if (distance != -1) ...[
+                                  const Icon(Icons.location_on, size: 10, color: Colors.blueGrey),
+                                  Text(' ${distance.toStringAsFixed(1)}km', style: const TextStyle(fontSize: 10, color: Colors.blueGrey)),
+                                ] else
+                                  const Text('Location unknown', style: TextStyle(fontSize: 10, color: Colors.grey)),
+                              ],
+                            ),
+                            const SizedBox(height: 12),
+                            SizedBox(
+                              height: 35,
+                              child: ElevatedButton(
+                                onPressed: () {
+                                  Navigator.push(
+                                    context,
+                                    MaterialPageRoute(
+                                      builder: (context) => WorkerDetailsScreen(
+                                        workerData: worker,
+                                        contractorName: _userName,
+                                      ),
+                                    ),
+                                  );
+                                },
+                                style: ElevatedButton.styleFrom(
+                                  backgroundColor: const Color(0xFF0F3A40),
+                                  padding: const EdgeInsets.symmetric(horizontal: 10),
+                                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                                ),
+                                child: const Text('View Details', style: TextStyle(fontSize: 11, color: Colors.white)),
                               ),
                             ),
                           ],
-                        ),
-                        if (distance != -1)
-                          Text('${distance.toStringAsFixed(1)} km away', style: const TextStyle(fontSize: 12, color: Colors.blueGrey)),
-                        const SizedBox(height: 12),
-                        SizedBox(
-                          height: 35,
-                          child: ElevatedButton(
-                            onPressed: () {
-                              Navigator.push(
-                                context,
-                                MaterialPageRoute(
-                                  builder: (context) => WorkerDetailsScreen(
-                                    workerData: worker,
-                                    contractorName: _userName,
-                                  ),
-                                ),
-                              );
-                            },
-                            style: ElevatedButton.styleFrom(
-                              backgroundColor: const Color(0xFF0F3A40),
-                              padding: const EdgeInsets.symmetric(horizontal: 10),
-                              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-                            ),
-                            child: const Text('View Details', style: TextStyle(fontSize: 11, color: Colors.white)),
-                          ),
                         ),
                       ],
                     ),
@@ -269,142 +419,272 @@ class _ContractorDashboardState extends State<ContractorDashboard> {
   }
 
   Widget _buildWorkersListView() {
-    return StreamBuilder<QuerySnapshot>(
-      stream: FirebaseFirestore.instance.collection('users').where('role', isEqualTo: 'Worker').snapshots(),
-      builder: (context, snapshot) {
-        if (snapshot.hasError) {
-          return Center(child: Text('Error: ${snapshot.error}', style: const TextStyle(color: Colors.red)));
-        }
-        if (snapshot.connectionState == ConnectionState.waiting) {
-          return const Center(child: CircularProgressIndicator());
-        }
-        if (!snapshot.hasData || snapshot.data!.docs.isEmpty) {
-          return const Center(child: Text('No workers registered yet.', style: TextStyle(color: Colors.grey)));
-        }
+    final uid = FirebaseAuth.instance.currentUser?.uid;
 
-        return ListView.builder(
-          padding: const EdgeInsets.all(16),
-          itemCount: snapshot.data!.docs.length,
-          itemBuilder: (context, index) {
-            final doc = snapshot.data!.docs[index];
-            final data = doc.data() as Map<String, dynamic>;
-            data['uid'] = doc.id;
-            final List<dynamic> skills = data['skills'] ?? [];
+    return Column(
+      children: [
+        // Search Bar
+        Padding(
+          padding: const EdgeInsets.fromLTRB(16, 16, 16, 0),
+          child: Container(
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(16),
+              boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.05), blurRadius: 10, offset: const Offset(0, 4))],
+            ),
+            child: TextField(
+              controller: _searchController,
+              onChanged: (value) => setState(() => _searchQuery = value),
+              decoration: InputDecoration(
+                hintText: 'Search by name, skill, or location...',
+                prefixIcon: const Icon(Icons.search, color: Color(0xFF0F3A40)),
+                suffixIcon: _searchQuery.isNotEmpty 
+                  ? IconButton(icon: const Icon(Icons.clear, size: 20), onPressed: () {
+                      _searchController.clear();
+                      setState(() => _searchQuery = "");
+                    })
+                  : null,
+                border: InputBorder.none,
+                contentPadding: const EdgeInsets.symmetric(vertical: 15),
+              ),
+            ),
+          ),
+        ),
+        
+        // Active Filters Display (Optional but nice)
+        if (_locationFilter.isNotEmpty || _educationFilter.isNotEmpty || _showOnlyShortlisted)
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 8.0),
+            child: SingleChildScrollView(
+              scrollDirection: Axis.horizontal,
+              child: Row(
+                children: [
+                   if (_showOnlyShortlisted)
+                    Padding(
+                      padding: const EdgeInsets.only(right: 8.0),
+                      child: Chip(
+                        label: const Text('Shortlisted', style: TextStyle(fontSize: 12, color: Colors.white)),
+                        backgroundColor: Colors.amber,
+                        onDeleted: () => setState(() => _showOnlyShortlisted = false),
+                        deleteIconColor: Colors.white,
+                      ),
+                    ),
+                  if (_locationFilter.isNotEmpty)
+                    Padding(
+                      padding: const EdgeInsets.only(right: 8.0),
+                      child: Chip(
+                        label: Text('Near: $_locationFilter', style: const TextStyle(fontSize: 12)),
+                        onDeleted: () => setState(() => _locationFilter = ""),
+                      ),
+                    ),
+                  if (_educationFilter.isNotEmpty)
+                    Padding(
+                      padding: const EdgeInsets.only(right: 8.0),
+                      child: Chip(
+                        label: Text('Edu: $_educationFilter', style: const TextStyle(fontSize: 12)),
+                        onDeleted: () => setState(() => _educationFilter = ""),
+                      ),
+                    ),
+                ],
+              ),
+            ),
+          ),
 
-            return Card(
-              margin: const EdgeInsets.only(bottom: 16),
-              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-              elevation: 2,
-              child: Padding(
+        Expanded(
+          child: StreamBuilder<QuerySnapshot>(
+            stream: FirebaseFirestore.instance.collection('users').where('role', isEqualTo: 'Worker').snapshots(),
+            builder: (context, snapshot) {
+              if (snapshot.hasError) {
+                return Center(child: Text('Error: ${snapshot.error}', style: const TextStyle(color: Colors.red)));
+              }
+              if (snapshot.connectionState == ConnectionState.waiting) {
+                return const Center(child: CircularProgressIndicator());
+              }
+              if (!snapshot.hasData || snapshot.data!.docs.isEmpty) {
+                return const Center(child: Text('No workers registered yet.', style: TextStyle(color: Colors.grey)));
+              }
+
+              // Apply Filters Client-Side
+              final workers = snapshot.data!.docs.where((doc) {
+                final data = doc.data() as Map<String, dynamic>;
+                final name = (data['name'] ?? '').toString().toLowerCase();
+                final address = (data['address'] ?? '').toString().toLowerCase();
+                final education = (data['education'] ?? '').toString().toLowerCase();
+                final List<dynamic> skills = data['skills'] ?? [];
+                final List<dynamic> shortlistedBy = data['shortlistedBy'] ?? [];
+                
+                // 1. Unified Search (Name, Skills, Address)
+                bool matchesSearch = _searchQuery.isEmpty || 
+                                    name.contains(_searchQuery.toLowerCase()) ||
+                                    address.contains(_searchQuery.toLowerCase()) ||
+                                    skills.any((s) => s.toString().toLowerCase().contains(_searchQuery.toLowerCase()));
+                
+                // 2. Location Filter
+                bool matchesLocation = _locationFilter.isEmpty || address.contains(_locationFilter.toLowerCase());
+
+                // 3. Education Filter
+                bool matchesEducation = _educationFilter.isEmpty || education.contains(_educationFilter.toLowerCase());
+
+                // 4. Shortlisted Filter
+                bool matchesShortlist = !_showOnlyShortlisted || shortlistedBy.contains(uid);
+
+                return matchesSearch && matchesLocation && matchesEducation && matchesShortlist;
+              }).toList();
+
+              if (workers.isEmpty) {
+                return const Center(child: Text('No workers match your filters.', style: TextStyle(color: Colors.grey)));
+              }
+
+              return ListView.builder(
                 padding: const EdgeInsets.all(16),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Row(
-                      children: [
-                        CircleAvatar(
-                          backgroundColor: const Color(0xFF0F3A40).withOpacity(0.1),
-                          child: Text(
-                            (data['name'] != null && data['name'].toString().isNotEmpty) 
-                              ? data['name'].toString()[0].toUpperCase() 
-                              : 'W', 
-                            style: const TextStyle(color: Color(0xFF0F3A40), fontWeight: FontWeight.bold)
-                          ),
-                        ),
-                        const SizedBox(width: 12),
-                        Expanded(
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
+                itemCount: workers.length,
+                itemBuilder: (context, index) {
+                  final doc = workers[index];
+                  final data = doc.data() as Map<String, dynamic>;
+                  data['uid'] = doc.id;
+                  final List<dynamic> skills = data['skills'] ?? [];
+                  final List<dynamic> shortlistedBy = data['shortlistedBy'] ?? [];
+                  final bool isShortlisted = shortlistedBy.contains(uid);
+
+                  return Card(
+                    margin: const EdgeInsets.only(bottom: 16),
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                    elevation: 2,
+                    child: Padding(
+                      padding: const EdgeInsets.all(16),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Row(
                             children: [
-                              Text(
-                                data['name'] ?? 'Worker',
-                                style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Color(0xFF0F3A40)),
-                              ),
-                              const SizedBox(height: 2),
-                              Container(
-                                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-                                decoration: BoxDecoration(
-                                  color: (data['status'] == 'active' || data['status'] == null) ? Colors.green.withOpacity(0.1) : Colors.grey.withOpacity(0.1),
-                                  borderRadius: BorderRadius.circular(4),
-                                ),
+                              CircleAvatar(
+                                backgroundColor: const Color(0xFF0F3A40).withOpacity(0.1),
                                 child: Text(
-                                  (data['status'] == 'active' || data['status'] == null) ? 'ACTIVE' : 'INACTIVE',
-                                  style: TextStyle(
-                                    fontSize: 10, 
-                                    color: (data['status'] == 'active' || data['status'] == null) ? Colors.green : Colors.grey,
-                                    fontWeight: FontWeight.bold
-                                  ),
+                                  (data['name'] != null && data['name'].toString().isNotEmpty) 
+                                    ? data['name'].toString()[0].toUpperCase() 
+                                    : 'W', 
+                                  style: const TextStyle(color: Color(0xFF0F3A40), fontWeight: FontWeight.bold)
+                                ),
+                              ),
+                              const SizedBox(width: 12),
+                              Expanded(
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Row(
+                                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                      children: [
+                                        Text(
+                                          data['name'] ?? 'Worker',
+                                          style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Color(0xFF0F3A40)),
+                                        ),
+                                        IconButton(
+                                          icon: Icon(
+                                            isShortlisted ? Icons.star : Icons.star_border,
+                                            color: isShortlisted ? Colors.amber : Colors.grey,
+                                          ),
+                                          onPressed: () => _toggleShortlist(doc.id, shortlistedBy),
+                                        ),
+                                      ],
+                                    ),
+                                    const SizedBox(height: 2),
+                                    Row(
+                                      children: [
+                                        Container(
+                                          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                                          decoration: BoxDecoration(
+                                            color: (data['status'] == 'active' || data['status'] == null) ? Colors.green.withOpacity(0.1) : Colors.grey.withOpacity(0.1),
+                                            borderRadius: BorderRadius.circular(4),
+                                          ),
+                                          child: Text(
+                                            (data['status'] == 'active' || data['status'] == null) ? 'ACTIVE' : 'INACTIVE',
+                                            style: TextStyle(
+                                              fontSize: 10, 
+                                              color: (data['status'] == 'active' || data['status'] == null) ? Colors.green : Colors.grey,
+                                              fontWeight: FontWeight.bold
+                                            ),
+                                          ),
+                                        ),
+                                        if (data['education'] != null && data['education'].toString().isNotEmpty) ...[
+                                          const SizedBox(width: 8),
+                                          Icon(Icons.school, size: 12, color: Colors.grey.shade600),
+                                          const SizedBox(width: 4),
+                                          Text(data['education'], style: TextStyle(fontSize: 10, color: Colors.grey.shade600)),
+                                        ],
+                                      ],
+                                    ),
+                                  ],
                                 ),
                               ),
                             ],
                           ),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 12),
-                    const Text('Skills:', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13, color: Colors.grey)),
-                    const SizedBox(height: 4),
-                    Wrap(
-                      spacing: 6,
-                      children: skills.map((skill) => Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                        decoration: BoxDecoration(
-                          color: const Color(0xFFA5555A).withOpacity(0.1),
-                          borderRadius: BorderRadius.circular(8),
-                        ),
-                        child: Text(skill.toString(), style: const TextStyle(fontSize: 12, color: Color(0xFFA5555A))),
-                      )).toList(),
-                    ),
-                    const SizedBox(height: 20),
-                    Row(
-                      children: [
-                        Expanded(
-                          child: OutlinedButton(
-                            onPressed: () {
-                              Navigator.push(
-                                context,
-                                MaterialPageRoute(
-                                  builder: (context) => WorkerDetailsScreen(
-                                    workerData: data,
-                                    contractorName: _userName,
+                          const SizedBox(height: 12),
+                          const Text('Skills:', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13, color: Colors.grey)),
+                          const SizedBox(height: 4),
+                          Wrap(
+                            spacing: 6,
+                            children: skills.map((skill) => Container(
+                              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                              decoration: BoxDecoration(
+                                color: const Color(0xFFA5555A).withOpacity(0.1),
+                                borderRadius: BorderRadius.circular(8),
+                              ),
+                              child: Text(skill.toString(), style: const TextStyle(fontSize: 12, color: Color(0xFFA5555A))),
+                            )).toList(),
+                          ),
+                          const SizedBox(height: 20),
+                          Row(
+                            children: [
+                              Expanded(
+                                child: OutlinedButton(
+                                  onPressed: () {
+                                    Navigator.push(
+                                      context,
+                                      MaterialPageRoute(
+                                        builder: (context) => WorkerDetailsScreen(
+                                          workerData: data,
+                                          contractorName: _userName,
+                                        ),
+                                      ),
+                                    );
+                                  },
+                                  style: OutlinedButton.styleFrom(
+                                    side: const BorderSide(color: Color(0xFF0F3A40)),
+                                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
                                   ),
+                                  child: const Text('View Details', style: TextStyle(color: Color(0xFF0F3A40))),
                                 ),
-                              );
-                            },
-                            style: OutlinedButton.styleFrom(
-                              side: const BorderSide(color: Color(0xFF0F3A40)),
-                              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-                            ),
-                            child: const Text('View Details', style: TextStyle(color: Color(0xFF0F3A40))),
+                              ),
+                              const SizedBox(width: 12),
+                              Expanded(
+                                child: ElevatedButton(
+                                  onPressed: () {
+                                    Navigator.push(
+                                      context, 
+                                      MaterialPageRoute(
+                                        builder: (context) => DirectPostJobScreen(workerData: data)
+                                      )
+                                    );
+                                  },
+                                  style: ElevatedButton.styleFrom(
+                                    backgroundColor: const Color(0xFF0F3A40),
+                                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                                  ),
+                                  child: const Text('Post Job', style: TextStyle(color: Colors.white)),
+                                ),
+                              ),
+                            ],
                           ),
-                        ),
-                        const SizedBox(width: 12),
-                        Expanded(
-                          child: ElevatedButton(
-                            onPressed: () {
-                              Navigator.push(
-                                context, 
-                                MaterialPageRoute(
-                                  builder: (context) => DirectPostJobScreen(workerData: data)
-                                )
-                              );
-                            },
-                            style: ElevatedButton.styleFrom(
-                              backgroundColor: const Color(0xFF0F3A40),
-                              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-                            ),
-                            child: const Text('Post Job', style: TextStyle(color: Colors.white)),
-                          ),
-                        ),
-                      ],
+                        ],
+                      ),
                     ),
-                  ],
-                ),
-              ),
-            );
-          },
-        );
-      },
+                  );
+                },
+              );
+            },
+          ),
+        ),
+      ],
     );
   }
 
@@ -759,6 +1039,111 @@ class _ContractorDashboardState extends State<ContractorDashboard> {
     );
   }
   
+  Future<void> _toggleShortlist(String workerId, List shortlistedBy) async {
+    final uid = FirebaseAuth.instance.currentUser?.uid;
+    if (uid == null) return;
+
+    List updatedList = List.from(shortlistedBy);
+    if (updatedList.contains(uid)) {
+      updatedList.remove(uid);
+    } else {
+      updatedList.add(uid);
+    }
+
+    try {
+      await FirebaseFirestore.instance.collection('users').doc(workerId).update({
+        'shortlistedBy': updatedList,
+      });
+    } catch (e) {
+      debugPrint("Error toggling shortlist: $e");
+    }
+  }
+
+  void _showFilterSheet() {
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (context) => StatefulBuilder(
+        builder: (context, setModalState) {
+          return Container(
+            decoration: const BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.vertical(top: Radius.circular(32)),
+            ),
+            padding: EdgeInsets.only(
+              bottom: MediaQuery.of(context).viewInsets.bottom + 32,
+              top: 32,
+              left: 24,
+              right: 24,
+            ),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    const Text('Advanced Filters', style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold, color: Color(0xFF0F3A40))),
+                    TextButton(
+                      onPressed: () {
+                        setState(() {
+                          _locationFilter = "";
+                          _educationFilter = "";
+                          _showOnlyShortlisted = false;
+                        });
+                        Navigator.pop(context);
+                      },
+                      child: const Text('Reset All', style: TextStyle(color: Colors.red)),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 24),
+                const Text('Location', style: TextStyle(fontWeight: FontWeight.bold, color: Colors.grey)),
+                TextField(
+                  onChanged: (v) => setState(() => _locationFilter = v),
+                  decoration: const InputDecoration(hintText: 'e.g., New York, Bronx'),
+                  controller: TextEditingController(text: _locationFilter),
+                ),
+                const SizedBox(height: 24),
+                const Text('Education', style: TextStyle(fontWeight: FontWeight.bold, color: Colors.grey)),
+                TextField(
+                  onChanged: (v) => setState(() => _educationFilter = v),
+                  decoration: const InputDecoration(hintText: 'e.g., Bachelors, High School'),
+                  controller: TextEditingController(text: _educationFilter),
+                ),
+                const SizedBox(height: 24),
+                SwitchListTile(
+                  title: const Text('Show Only Shortlisted Workers', style: TextStyle(fontWeight: FontWeight.bold, color: Color(0xFF0F3A40))),
+                  subtitle: const Text('View your saved/starred workers'),
+                  value: _showOnlyShortlisted,
+                  activeColor: Colors.amber,
+                  onChanged: (val) {
+                    setState(() => _showOnlyShortlisted = val);
+                    setModalState(() {});
+                  },
+                ),
+                const SizedBox(height: 32),
+                SizedBox(
+                  width: double.infinity,
+                  child: ElevatedButton(
+                    onPressed: () => Navigator.pop(context),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: const Color(0xFF0F3A40),
+                      padding: const EdgeInsets.symmetric(vertical: 16),
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                    ),
+                    child: const Text('Apply Filters', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+                  ),
+                ),
+              ],
+            ),
+          );
+        }
+      ),
+    );
+  }
+
   Widget _buildProfileView() {
     return const ContractorProfileScreen();
   }
@@ -810,6 +1195,16 @@ class _ContractorDashboardState extends State<ContractorDashboard> {
           backgroundColor: Colors.white,
           elevation: 0,
           actions: [
+            if (_selectedIndex == 1)
+              IconButton(
+                icon: Icon(
+                  (_locationFilter.isNotEmpty || _educationFilter.isNotEmpty || _showOnlyShortlisted) 
+                    ? Icons.filter_alt 
+                    : Icons.filter_alt_outlined, 
+                  color: const Color(0xFF0F3A40)
+                ),
+                onPressed: _showFilterSheet,
+              ),
             IconButton(
               icon: const Icon(Icons.notifications_none_outlined, color: Color(0xFF0F3A40)),
               onPressed: () => setState(() => _selectedIndex = 3),

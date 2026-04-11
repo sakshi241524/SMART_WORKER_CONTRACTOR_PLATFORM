@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:intl/intl.dart';
+import 'services/recommendation_engine.dart';
 
 class PostJobScreen extends StatefulWidget {
   const PostJobScreen({super.key});
@@ -24,6 +25,8 @@ class _PostJobScreenState extends State<PostJobScreen> {
   final List<String> _professions = ['Electrician', 'Plumber', 'Carpenter', 'Painter', 'Mason', 'Laborer'];
   final Map<String, int> _selectedWorkers = {};
   bool _isLoading = false;
+  double? _contractorLat;
+  double? _contractorLng;
 
   @override
   void initState() {
@@ -36,8 +39,11 @@ class _PostJobScreenState extends State<PostJobScreen> {
     if (uid != null) {
       final doc = await FirebaseFirestore.instance.collection('users').doc(uid).get();
       if (doc.exists && mounted) {
+        final data = doc.data();
         setState(() {
-          _contractorNameController.text = doc.get('name') ?? "";
+          _contractorNameController.text = data?['name'] ?? "";
+          _contractorLat = data?['latitude'];
+          _contractorLng = data?['longitude'];
         });
       }
     }
@@ -101,9 +107,16 @@ class _PostJobScreenState extends State<PostJobScreen> {
       return;
     }
 
-    setState(() => _isLoading = true);
+      setState(() => _isLoading = true);
 
-    try {
+      // Perform AI Smart Dispatch Scan
+      final List<String> targetedWorkerIds = await RecommendationEngine.identifyMatchingWorkers(
+        requiredWorkers: _selectedWorkers,
+        district: _districtController.text.trim(),
+        contractorLat: _contractorLat,
+        contractorLng: _contractorLng,
+      );
+
       final uid = FirebaseAuth.instance.currentUser?.uid;
       await FirebaseFirestore.instance.collection('jobs').add({
         'contractorId': uid,
@@ -117,6 +130,7 @@ class _PostJobScreenState extends State<PostJobScreen> {
         'date': Timestamp.fromDate(_selectedDate),
         'requiredWorkers': _selectedWorkers,
         'acceptedWorkers': _selectedWorkers.map((key, value) => MapEntry(key, [])),
+        'targetedWorkerIds': targetedWorkerIds, // Targeted dispatch
         'status': 'open',
         'createdAt': FieldValue.serverTimestamp(),
       });

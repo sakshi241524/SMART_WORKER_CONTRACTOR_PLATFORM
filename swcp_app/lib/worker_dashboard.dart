@@ -8,7 +8,7 @@ import 'job_details_worker_screen.dart';
 import 'role_selection_screen.dart';
 import 'package:provider/provider.dart';
 import 'app_state.dart';
-import 'app_state.dart';
+import 'services/job_ranking_engine.dart';
 
 class WorkerDashboard extends StatefulWidget {
   final int initialIndex;
@@ -21,6 +21,7 @@ class WorkerDashboard extends StatefulWidget {
 class _WorkerDashboardState extends State<WorkerDashboard> {
   late int _selectedIndex;
   String _userName = "...";
+  List<String> _workerSkills = [];
   bool _isWorkerActive = true;
   bool _isUpdating = false;
 
@@ -32,28 +33,27 @@ class _WorkerDashboardState extends State<WorkerDashboard> {
   }
 
   Future<void> _loadInitialData() async {
-    await _fetchUserName();
-    await _fetchWorkerStatus();
+    await _fetchUserAndStatus();
+    await _refreshHeartbeat();
   }
 
-  Future<void> _fetchUserName() async {
+  Future<void> _refreshHeartbeat() async {
+    final uid = FirebaseAuth.instance.currentUser?.uid;
+    if (uid != null) {
+      FirebaseFirestore.instance.collection('users').doc(uid).update({
+        'lastSeen': FieldValue.serverTimestamp(),
+      }).catchError((e) => debugPrint("Heartbeat error: $e"));
+    }
+  }
+
+  Future<void> _fetchUserAndStatus() async {
     final uid = FirebaseAuth.instance.currentUser?.uid;
     if (uid != null) {
       final doc = await FirebaseFirestore.instance.collection('users').doc(uid).get();
       if (doc.exists && mounted) {
         setState(() {
           _userName = doc.get('name') ?? "Worker";
-        });
-      }
-    }
-  }
-
-  Future<void> _fetchWorkerStatus() async {
-    final uid = FirebaseAuth.instance.currentUser?.uid;
-    if (uid != null) {
-      final doc = await FirebaseFirestore.instance.collection('users').doc(uid).get();
-      if (doc.exists && mounted) {
-        setState(() {
+          _workerSkills = List<String>.from(doc.get('skills') ?? []);
           final status = doc.get('status') ?? 'active';
           _isWorkerActive = status == 'active';
         });
@@ -70,6 +70,7 @@ class _WorkerDashboardState extends State<WorkerDashboard> {
     try {
       await FirebaseFirestore.instance.collection('users').doc(uid).update({
         'status': active ? 'active' : 'inactive',
+        'lastSeen': FieldValue.serverTimestamp(),
       });
       if (mounted) {
         setState(() {
@@ -218,45 +219,60 @@ class _WorkerDashboardState extends State<WorkerDashboard> {
                 if (!snapshot.hasData) return _buildEmptyJobsView();
 
                 final uid = FirebaseAuth.instance.currentUser?.uid;
-                final oneHourAgo = DateTime.now().subtract(const Duration(hours: 1));
                 
-                final filteredDocs = snapshot.data!.docs.where((doc) {
+                final jobScores = snapshot.data!.docs.map((doc) {
                   final data = doc.data() as Map<String, dynamic>;
-                  final targetId = data['targetWorkerId'];
-                  final createdAt = (data['createdAt'] as Timestamp?)?.toDate() ?? DateTime.now();
-                  final List<dynamic> rejectedBy = data['rejectedBy'] is List ? data['rejectedBy'] : [];
-                  final Map<String, dynamic> accepted = data['acceptedWorkers'] is Map ? data['acceptedWorkers'] : {};
+                  if (alreadyJoined) return null;
                   
-                  // Check if this specific worker has rejected this job
-                  if (rejectedBy.contains(uid)) return false;
+                  final targetId = data['targetWorkerId'];
+                  final List<dynamic> targetedIds = data['targetedWorkerIds'] is List ? data['targetedWorkerIds'] : [];
+                  
+                  // Targeted Dispatch Logic
+                  bool isVisible = false;
+                  if (targetId != null) {
+                    isVisible = (targetId == uid);
+                  } else if (targetedIds.isNotEmpty) {
+                    isVisible = targetedIds.contains(uid);
+                  } else {
+                    // Legacy/Public jobs
+                    isVisible = true;
+                  }
+                  
+                  if (!isVisible) return null;
 
-                  // Check if already joined
-                  bool alreadyJoined = false;
-                  accepted.values.forEach((list) {
-                    if (list is List && list.contains(uid)) alreadyJoined = true;
-                  });
+                  // Ranking Logic
+                  final double score = JobRankingEngine.calculateJobScore(
+                    workerSkills: _workerSkills,
+                    jobRequiredProfessions: data['requiredWorkers'] ?? {},
+                    createdAt: data['createdAt'],
+                    jobDate: data['date'],
+                    isTargeted: (targetId == uid) || targetedIds.contains(uid),
+                  );
 
-                  // Dashboard Logic: 
-                  // 1. Must be less than 1 hour old
-                  // 2. Must be directed to me OR public
-                  // 3. Must NOT be already joined
-                  return createdAt.isAfter(oneHourAgo) && 
-                         (targetId == null || targetId == uid) &&
-                         !alreadyJoined;
-                }).toList();
+                  return {
+                    'data': data,
+                    'id': doc.id,
+                    'score': score,
+                  };
+                }).whereType<Map<String, dynamic>>().toList();
 
-                if (filteredDocs.isEmpty) {
+                // Sort by highest relevance
+                jobScores.sort((a, b) => (b['score'] as double).compareTo(a['score'] as double));
+
+                // Home view: show top 5 high-relevance jobs
+                final filteredJobs = jobScores.take(10).toList();
+
+                if (filteredJobs.isEmpty) {
                   return _buildEmptyJobsView();
                 }
 
                 return ListView.builder(
                   shrinkWrap: true,
                   physics: const NeverScrollableScrollPhysics(),
-                  itemCount: filteredDocs.length,
+                  itemCount: filteredJobs.length,
                   itemBuilder: (context, index) {
-                    final doc = filteredDocs[index];
-                    final data = doc.data() as Map<String, dynamic>;
-                    return _buildJobCard(data, doc.id);
+                    final job = filteredJobs[index];
+                    return _buildJobCard(job['data'], job['id'], job['score']);
                   },
                 );
               },
@@ -297,9 +313,19 @@ class _WorkerDashboardState extends State<WorkerDashboard> {
     );
   }
 
-  Widget _buildJobCard(Map<String, dynamic> data, String jobId) {
+  Widget _buildJobCard(Map<String, dynamic> data, String jobId, [double? score]) {
     final Map<String, dynamic> required = data['requiredWorkers'] ?? {};
     final String professionSummary = required.entries.map((e) => '${e.key} ${e.value}').join(', ');
+    final String label = score != null ? JobRankingEngine.getRelevanceLabel(score) : "OPEN";
+    
+    // Check urgency (less than 24 hours until job)
+    bool isUrgent = false;
+    if (data['date'] != null) {
+      DateTime date = (data['date'] is Timestamp) ? (data['date'] as Timestamp).toDate() : (data['date'] as DateTime);
+      if (date.difference(DateTime.now()).inHours <= 24 && date.isAfter(DateTime.now())) {
+        isUrgent = true;
+      }
+    }
 
     return Card(
       margin: const EdgeInsets.only(bottom: 16),
@@ -327,11 +353,35 @@ class _WorkerDashboardState extends State<WorkerDashboard> {
                 ),
                 Container(
                   padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-                  decoration: BoxDecoration(color: const Color(0xFF0F3A40).withOpacity(0.1), borderRadius: BorderRadius.circular(10)),
-                  child: const Text('OPEN', style: TextStyle(color: Color(0xFF0F3A40), fontWeight: FontWeight.bold, fontSize: 12)),
+                  decoration: BoxDecoration(
+                    color: isUrgent ? Colors.red.shade50 : const Color(0xFF0F3A40).withOpacity(0.1), 
+                    borderRadius: BorderRadius.circular(10),
+                    border: isUrgent ? Border.all(color: Colors.red.shade200) : null,
+                  ),
+                  child: Text(
+                    isUrgent ? 'URGENT' : label.toUpperCase(), 
+                    style: TextStyle(
+                      color: isUrgent ? Colors.red : const Color(0xFF0F3A40), 
+                      fontWeight: FontWeight.bold, 
+                      fontSize: 12
+                    )
+                  ),
                 ),
               ],
             ),
+            if (score != null && score >= 0.6) ...[
+              const SizedBox(height: 8),
+              Row(
+                children: [
+                  const Icon(Icons.star, color: Colors.amber, size: 14),
+                  const SizedBox(width: 4),
+                  Text(
+                    '${(score * 100).toInt()}% match for your skills',
+                    style: const TextStyle(fontSize: 12, color: Colors.amber, fontWeight: FontWeight.bold),
+                  ),
+                ],
+              ),
+            ],
             const Padding(
               padding: EdgeInsets.symmetric(vertical: 16.0),
               child: Divider(),
@@ -510,35 +560,73 @@ class _WorkerDashboardState extends State<WorkerDashboard> {
         if (snapshot.connectionState == ConnectionState.waiting) return const Center(child: CircularProgressIndicator());
         
         final uid = FirebaseAuth.instance.currentUser?.uid;
-        final oneHourAgo = DateTime.now().subtract(const Duration(hours: 1));
-        
-        final jobs = snapshot.data!.docs.where((doc) {
+
+        final jobScores = snapshot.data!.docs.map((doc) {
           final data = doc.data() as Map<String, dynamic>;
           final targetId = data['targetWorkerId'];
-          final createdAt = (data['createdAt'] as Timestamp?)?.toDate() ?? DateTime.now();
           final List<dynamic> rejectedBy = data['rejectedBy'] is List ? data['rejectedBy'] : [];
           final Map<String, dynamic> accepted = data['acceptedWorkers'] is Map ? data['acceptedWorkers'] : {};
           final String status = data['status'] ?? 'open';
           
-          // CRITICAL: If I rejected this job, it MUST NOT show up anywhere
-          if (rejectedBy.contains(uid)) return false;
+          if (rejectedBy.contains(uid)) return null;
 
           bool alreadyJoined = false;
           accepted.values.forEach((list) {
             if (list is List && list.contains(uid)) alreadyJoined = true;
           });
 
-          // Jobs Page Logic:
-          // 1. Show ANY job I have already joined (even if closed)
-          // 2. Show OPEN jobs that are older than 1 hour AND (directed to me or public)
-          if (alreadyJoined) return true;
+          if (alreadyJoined) {
+            return {
+              'data': data,
+              'id': doc.id,
+              'score': 1.0, // Joined jobs at the top
+              'isJoined': true,
+            };
+          }
           
-          if (status != 'open') return false; // Non-joined jobs must be open
+          if (status != 'open') return null;
 
-          return createdAt.isBefore(oneHourAgo) && (targetId == null || targetId == uid);
-        }).toList();
+          final targetId = data['targetWorkerId'];
+          final List<dynamic> targetedIds = data['targetedWorkerIds'] is List ? data['targetedWorkerIds'] : [];
+          
+          // Targeted Dispatch Logic
+          bool isVisible = false;
+          if (targetId != null) {
+            isVisible = (targetId == uid);
+          } else if (targetedIds.isNotEmpty) {
+            isVisible = targetedIds.contains(uid);
+          } else {
+            // Legacy/Public jobs
+            isVisible = true;
+          }
+          
+          if (!isVisible) return null;
 
-        if (jobs.isEmpty) {
+          final double score = JobRankingEngine.calculateJobScore(
+            workerSkills: _workerSkills,
+            jobRequiredProfessions: data['requiredWorkers'] ?? {},
+            createdAt: data['createdAt'],
+            jobDate: data['date'],
+            isTargeted: (targetId == uid) || targetedIds.contains(uid),
+          );
+
+          return {
+            'data': data,
+            'id': doc.id,
+            'score': score,
+            'isJoined': false,
+          };
+        }).whereType<Map<String, dynamic>>().toList();
+
+        // Sort: Joined jobs first, then by score
+        jobScores.sort((a, b) {
+          if (a['isJoined'] != b['isJoined']) {
+            return a['isJoined'] ? -1 : 1;
+          }
+          return (b['score'] as double).compareTo(a['score'] as double);
+        });
+
+        if (jobScores.isEmpty) {
           return Center(
             child: Column(
               mainAxisAlignment: MainAxisAlignment.center,
@@ -553,55 +641,14 @@ class _WorkerDashboardState extends State<WorkerDashboard> {
 
         return ListView.builder(
           padding: const EdgeInsets.all(16),
-          itemCount: jobs.length,
+          itemCount: jobScores.length,
           itemBuilder: (context, index) {
-            final doc = jobs[index];
-            final data = doc.data() as Map<String, dynamic>;
-            final Map<String, dynamic> accepted = data['acceptedWorkers'] ?? {};
-            bool isAccepted = false;
-            accepted.values.forEach((list) {
-              if ((list as List).contains(uid)) isAccepted = true;
-            });
+            final job = jobScores[index];
+            final data = job['data'] as Map<String, dynamic>;
+            final id = job['id'] as String;
+            final score = job['score'] as double;
 
-            return Card(
-              margin: const EdgeInsets.only(bottom: 16),
-              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-              child: ListTile(
-                contentPadding: const EdgeInsets.all(16),
-                title: Text(data['jobName'] ?? 'Untitled Job', style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 18)),
-                subtitle: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    const SizedBox(height: 4),
-                    Text('By: ${data['contractorName'] ?? 'Contractor'}'),
-                    if (isAccepted) ...[
-                      const SizedBox(height: 8),
-                      Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                        decoration: BoxDecoration(color: Colors.green.withOpacity(0.1), borderRadius: BorderRadius.circular(4)),
-                        child: const Text('JOINED', style: TextStyle(color: Colors.green, fontWeight: FontWeight.bold, fontSize: 12)),
-                      ),
-                    ] else if (data['targetWorkerId'] != null) ...[
-                      const SizedBox(height: 8),
-                      Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                        decoration: BoxDecoration(color: Colors.amber.withOpacity(0.1), borderRadius: BorderRadius.circular(4)),
-                        child: const Text('DIRECT OFFER', style: TextStyle(color: Colors.orange, fontWeight: FontWeight.bold, fontSize: 12)),
-                      ),
-                    ],
-                  ],
-                ),
-                trailing: const Icon(Icons.arrow_forward_ios, size: 16),
-                onTap: () {
-                  Navigator.push(
-                    context,
-                    MaterialPageRoute(
-                      builder: (context) => JobDetailsWorkerScreen(jobData: data, jobId: doc.id),
-                    ),
-                  );
-                },
-              ),
-            );
+            return _buildJobCard(data, id, score);
           },
         );
       },

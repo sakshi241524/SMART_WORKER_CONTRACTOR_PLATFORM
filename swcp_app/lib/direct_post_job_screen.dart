@@ -25,27 +25,51 @@ class _DirectPostJobScreenState extends State<DirectPostJobScreen> {
   DateTime _selectedDate = DateTime.now();
   final List<String> _professions = ['Electrician', 'Plumber', 'Carpenter', 'Painter', 'Mason', 'Laborer'];
   final Map<String, int> _selectedWorkers = {};
+  final Set<String> _autoDetectedSkills = {};
   bool _isLoading = false;
 
   @override
   void initState() {
     super.initState();
     _fetchContractorName();
-    // Pre-fill profession if worker has skills
-    final List<dynamic> skills = widget.workerData['skills'] ?? [];
-    if (skills.isNotEmpty) {
-      // Find the first skill that matches our available professions
-      for (var skill in skills) {
-        if (_professions.contains(skill.toString())) {
-          _selectedWorkers[skill.toString()] = 1;
-          break;
+    _performSmartMatch();
+  }
+
+  void _performSmartMatch() {
+    final List<dynamic> workerSkills = widget.workerData['skills'] ?? [];
+    if (workerSkills.isEmpty) return;
+
+    for (var skillObj in workerSkills) {
+      String skill = skillObj.toString().toLowerCase().trim();
+      
+      for (var prof in _professions) {
+        String profLower = prof.toLowerCase();
+        
+        // 1. Exact Match
+        // 2. Contains (e.g. "Specialist Electrician" matches "Electrician")
+        // 3. Suffix variations (e.g. "Carpentry" matches "Carpenter")
+        bool isMatch = skill == profLower || 
+                      skill.contains(profLower) || 
+                      profLower.contains(skill);
+        
+        // Handle common variations
+        if (!isMatch) {
+          if (profLower == "carpenter" && skill.contains("carpentr")) isMatch = true;
+          if (profLower == "painter" && skill.contains("paint")) isMatch = true;
+          if (profLower == "laborer" && (skill.contains("labor") || skill.contains("labour"))) isMatch = true;
+          if (profLower == "mason" && skill.contains("mason")) isMatch = true;
+        }
+
+        if (isMatch) {
+          setState(() {
+            _selectedWorkers[prof] = 1;
+            _autoDetectedSkills.add(prof);
+          });
         }
       }
-      // If no match found, just pick the first skill or let the user choose
-      if (_selectedWorkers.isEmpty) {
-        _selectedWorkers[skills[0].toString()] = 1;
-      }
     }
+
+    // Fallback: If no match found, don't auto-select anything to avoid incorrect guesses
   }
 
   Future<void> _fetchContractorName() async {
@@ -207,6 +231,29 @@ class _DirectPostJobScreenState extends State<DirectPostJobScreen> {
                   ],
                 ),
               ),
+              if (_autoDetectedSkills.isNotEmpty) ...[
+                const SizedBox(height: 12),
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                  decoration: BoxDecoration(
+                    color: Colors.blue.shade50,
+                    borderRadius: BorderRadius.circular(8),
+                    border: Border.all(color: Colors.blue.shade100),
+                  ),
+                  child: Row(
+                    children: [
+                      const Icon(Icons.auto_awesome, size: 16, color: Colors.blue),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Text(
+                          "AI detected ${_autoDetectedSkills.length} matching skills from profile.",
+                          style: TextStyle(fontSize: 12, color: Colors.blue.shade800, fontWeight: FontWeight.w500),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
               const SizedBox(height: 24),
               _buildTextField(_jobNameController, 'Job Name'),
               _buildTextField(_contractorNameController, 'Contractor Name'),
@@ -250,18 +297,30 @@ class _DirectPostJobScreenState extends State<DirectPostJobScreen> {
               Wrap(
                 spacing: 8,
                 runSpacing: 8,
-                children: _professions.map((prof) => FilterChip(
-                  label: Text(prof),
-                  selected: _selectedWorkers.containsKey(prof),
-                  onSelected: (_) => _toggleProfession(prof),
-                  selectedColor: const Color(0xFF7CB9B3).withOpacity(0.5),
-                  checkmarkColor: const Color(0xFF0F3A40),
-                  backgroundColor: Colors.white,
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(8),
-                    side: BorderSide(color: Colors.grey.shade300),
-                  ),
-                )).toList(),
+                children: _professions.map((prof) {
+                  bool isAuto = _autoDetectedSkills.contains(prof);
+                  return FilterChip(
+                    label: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Text(prof),
+                        if (isAuto) ...[
+                          const SizedBox(width: 4),
+                          const Icon(Icons.auto_awesome, size: 12, color: Colors.blue),
+                        ],
+                      ],
+                    ),
+                    selected: _selectedWorkers.containsKey(prof),
+                    onSelected: (_) => _toggleProfession(prof),
+                    selectedColor: isAuto ? Colors.blue.shade100 : const Color(0xFF7CB9B3).withOpacity(0.5),
+                    checkmarkColor: isAuto ? Colors.blue : const Color(0xFF0F3A40),
+                    backgroundColor: Colors.white,
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(8),
+                      side: BorderSide(color: isAuto ? Colors.blue.shade200 : Colors.grey.shade300),
+                    ),
+                  );
+                }).toList(),
               ),
 
               const SizedBox(height: 32),
