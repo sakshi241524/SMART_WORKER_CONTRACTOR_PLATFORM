@@ -91,6 +91,9 @@ class _ChatsListScreenState extends State<ChatsListScreen> {
 
               final String lastMessage = data['lastMessage'] ?? '';
               final Timestamp? lastMessageTime = data['lastMessageTime'] as Timestamp?;
+              final Map<String, dynamic> unreadCounts = data['unreadCounts'] ?? {};
+              final int unreadCount = unreadCounts[currentUserUid] ?? 0;
+              final bool hasUnread = unreadCount > 0;
 
               return InkWell(
                 onTap: () {
@@ -137,10 +140,10 @@ class _ChatsListScreenState extends State<ChatsListScreen> {
                                 Expanded(
                                   child: Text(
                                     otherUserName,
-                                    style: const TextStyle(
+                                    style: TextStyle(
                                       fontSize: 16,
-                                      fontWeight: FontWeight.bold,
-                                      color: Color(0xFF0F3A40),
+                                      fontWeight: hasUnread ? FontWeight.w900 : FontWeight.bold,
+                                      color: hasUnread ? Colors.black : const Color(0xFF0F3A40),
                                     ),
                                     maxLines: 1,
                                     overflow: TextOverflow.ellipsis,
@@ -148,16 +151,47 @@ class _ChatsListScreenState extends State<ChatsListScreen> {
                                 ),
                                 Text(
                                   _formatTimestamp(lastMessageTime),
-                                  style: const TextStyle(fontSize: 12, color: Colors.grey),
+                                  style: TextStyle(
+                                    fontSize: 12, 
+                                    color: hasUnread ? const Color(0xFF25D366) : Colors.grey,
+                                    fontWeight: hasUnread ? FontWeight.bold : FontWeight.normal,
+                                  ),
                                 ),
                               ],
                             ),
                             const SizedBox(height: 4),
-                            Text(
-                              lastMessage.isEmpty ? "Started a new conversation" : lastMessage,
-                              style: const TextStyle(fontSize: 14, color: Colors.grey),
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
+                            Row(
+                              children: [
+                                Expanded(
+                                  child: Text(
+                                    lastMessage.isEmpty ? "Started a new conversation" : lastMessage,
+                                    style: TextStyle(
+                                      fontSize: 14, 
+                                      color: hasUnread ? Colors.black87 : Colors.grey,
+                                      fontWeight: hasUnread ? FontWeight.bold : FontWeight.normal,
+                                    ),
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                  ),
+                                ),
+                                if (hasUnread)
+                                  Container(
+                                    margin: const EdgeInsets.only(left: 8),
+                                    padding: const EdgeInsets.all(6),
+                                    decoration: const BoxDecoration(
+                                      color: Color(0xFF25D366),
+                                      shape: BoxShape.circle,
+                                    ),
+                                    child: Text(
+                                      unreadCount.toString(),
+                                      style: const TextStyle(
+                                        color: Colors.white,
+                                        fontSize: 10,
+                                        fontWeight: FontWeight.bold,
+                                      ),
+                                    ),
+                                  ),
+                              ],
                             ),
                           ],
                         ),

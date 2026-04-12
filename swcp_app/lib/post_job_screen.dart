@@ -184,7 +184,7 @@ class _PostJobScreenState extends State<PostJobScreen> {
       final String companyName = _contractorNameController.text.trim().isNotEmpty ? _contractorNameController.text.trim() : 'A Contractor';
       for (String workerId in targetedWorkerIds) {
         await FirebaseFirestore.instance.collection('notifications').add({
-          'recipientId': workerId,
+          'workerId': workerId,
           'senderId': uid,
           'senderName': companyName,
           'type': 'job_invitation',

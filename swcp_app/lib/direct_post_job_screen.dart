@@ -1,7 +1,9 @@
 import 'package:flutter/material.dart';
+import 'dart:convert';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:intl/intl.dart';
+import 'package:cached_network_image/cached_network_image.dart';
 
 class DirectPostJobScreen extends StatefulWidget {
   final Map<String, dynamic> workerData;
@@ -156,7 +158,7 @@ class _DirectPostJobScreenState extends State<DirectPostJobScreen> {
 
     try {
       final uid = FirebaseAuth.instance.currentUser?.uid;
-      await FirebaseFirestore.instance.collection('jobs').add({
+      final jobDocRef = await FirebaseFirestore.instance.collection('jobs').add({
         'contractorId': uid,
         'targetWorkerId': widget.workerData['uid'], // Direct job target
         'jobName': _jobNameController.text.trim(),
@@ -168,6 +170,20 @@ class _DirectPostJobScreenState extends State<DirectPostJobScreen> {
         'acceptedWorkers': _selectedWorkers.map((key, value) => MapEntry(key, [])),
         'status': 'open',
         'createdAt': FieldValue.serverTimestamp(),
+      });
+
+      // Send notification to targeted worker
+      final String companyName = _contractorNameController.text.trim().isNotEmpty ? _contractorNameController.text.trim() : 'A Contractor';
+      await FirebaseFirestore.instance.collection('notifications').add({
+        'workerId': widget.workerData['uid'],
+        'senderId': uid,
+        'senderName': companyName,
+        'type': 'job_invitation',
+        'title': 'Direct Job offer: ${_jobNameController.text.trim()}',
+        'message': 'You have received a direct job offer. Tap to view details.',
+        'jobId': jobDocRef.id,
+        'timestamp': FieldValue.serverTimestamp(),
+        'isRead': false,
       });
 
       if (mounted) {
@@ -220,8 +236,15 @@ class _DirectPostJobScreenState extends State<DirectPostJobScreen> {
                   children: [
                     CircleAvatar(
                       backgroundColor: const Color(0xFF0F3A40).withOpacity(0.1),
-                      child: Text(widget.workerData['name']?[0].toUpperCase() ?? 'W', 
-                        style: const TextStyle(color: Color(0xFF0F3A40), fontWeight: FontWeight.bold)),
+                      backgroundImage: (widget.workerData['profileImageUrl'] != null && widget.workerData['profileImageUrl'].toString().startsWith('data:image'))
+                        ? MemoryImage(base64Decode(widget.workerData['profileImageUrl'].toString().split(',').last)) as ImageProvider
+                        : (widget.workerData['profileImageUrl'] != null && widget.workerData['profileImageUrl'].toString().isNotEmpty)
+                          ? CachedNetworkImageProvider(widget.workerData['profileImageUrl'])
+                          : null,
+                      child: (widget.workerData['profileImageUrl'] == null || widget.workerData['profileImageUrl'].toString().isEmpty)
+                        ? Text(widget.workerData['name']?[0].toUpperCase() ?? 'W', 
+                            style: const TextStyle(color: Color(0xFF0F3A40), fontWeight: FontWeight.bold))
+                        : null,
                     ),
                     const SizedBox(width: 12),
                     Expanded(

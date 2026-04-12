@@ -1,3 +1,5 @@
+import 'dart:convert';
+import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
@@ -13,6 +15,7 @@ import 'app_state.dart';
 import 'services/recommendation_engine.dart';
 import 'data/india_data.dart';
 import 'chats_list_screen.dart';
+import 'profile_sections/ai_support_chat_screen.dart';
 import 'chat_conversation_screen.dart';
 
 class ContractorDashboard extends StatefulWidget {
@@ -379,10 +382,17 @@ class _ContractorDashboardState extends State<ContractorDashboard> {
                             CircleAvatar(
                               radius: 30,
                               backgroundColor: const Color(0xFF0F3A40).withOpacity(0.1),
-                              child: Text(
-                                (worker['name'] != null && worker['name'].toString().isNotEmpty) ? worker['name'][0].toUpperCase() : 'W',
-                                style: const TextStyle(fontWeight: FontWeight.bold, color: Color(0xFF0F3A40)),
-                              ),
+                              backgroundImage: (worker['profileImageUrl'] != null && worker['profileImageUrl'].toString().startsWith('data:image'))
+                                ? MemoryImage(base64Decode(worker['profileImageUrl'].toString().split(',').last)) as ImageProvider
+                                : (worker['profileImageUrl'] != null && worker['profileImageUrl'].toString().isNotEmpty)
+                                  ? CachedNetworkImageProvider(worker['profileImageUrl'])
+                                  : null,
+                              child: (worker['profileImageUrl'] == null || worker['profileImageUrl'].toString().isEmpty)
+                                ? Text(
+                                    (worker['name'] != null && worker['name'].toString().isNotEmpty) ? worker['name'][0].toUpperCase() : 'W',
+                                    style: const TextStyle(fontWeight: FontWeight.bold, color: Color(0xFF0F3A40)),
+                                  )
+                                : null,
                             ),
                             const SizedBox(height: 8),
                             Text(worker['name'] ?? 'Worker', textAlign: TextAlign.center, style: const TextStyle(fontWeight: FontWeight.bold), maxLines: 1, overflow: TextOverflow.ellipsis),
@@ -604,12 +614,19 @@ class _ContractorDashboardState extends State<ContractorDashboard> {
                             children: [
                               CircleAvatar(
                                 backgroundColor: const Color(0xFF0F3A40).withOpacity(0.1),
-                                child: Text(
-                                  (data['name'] != null && data['name'].toString().isNotEmpty) 
-                                    ? data['name'].toString()[0].toUpperCase() 
-                                    : 'W', 
-                                  style: const TextStyle(color: Color(0xFF0F3A40), fontWeight: FontWeight.bold)
-                                ),
+                                backgroundImage: (data['profileImageUrl'] != null && data['profileImageUrl'].toString().startsWith('data:image'))
+                                  ? MemoryImage(base64Decode(data['profileImageUrl'].toString().split(',').last)) as ImageProvider
+                                  : (data['profileImageUrl'] != null && data['profileImageUrl'].toString().isNotEmpty)
+                                    ? CachedNetworkImageProvider(data['profileImageUrl'])
+                                    : null,
+                                child: (data['profileImageUrl'] == null || data['profileImageUrl'].toString().isEmpty)
+                                  ? Text(
+                                      (data['name'] != null && data['name'].toString().isNotEmpty) 
+                                        ? data['name'].toString()[0].toUpperCase() 
+                                        : 'W', 
+                                      style: const TextStyle(color: Color(0xFF0F3A40), fontWeight: FontWeight.bold)
+                                    )
+                                  : null,
                               ),
                               const SizedBox(width: 12),
                               Expanded(
@@ -1373,8 +1390,108 @@ class _ContractorDashboardState extends State<ContractorDashboard> {
               label: 'Jobs',
             ),
             BottomNavigationBarItem(
-              icon: const Icon(Icons.chat_bubble_outline),
-              activeIcon: const Icon(Icons.chat_bubble),
+              icon: StreamBuilder<QuerySnapshot>(
+                stream: FirebaseFirestore.instance
+                    .collection('chats')
+                    .where('participants', arrayContains: FirebaseAuth.instance.currentUser?.uid)
+                    .snapshots(),
+                builder: (context, snapshot) {
+                  int totalUnread = 0;
+                  if (snapshot.hasData) {
+                    final uid = FirebaseAuth.instance.currentUser?.uid;
+                    for (var doc in snapshot.data!.docs) {
+                      final data = doc.data() as Map<String, dynamic>;
+                      final unreadCounts = data['unreadCounts'] as Map<String, dynamic>?;
+                      if (unreadCounts != null && uid != null) {
+                        totalUnread += (unreadCounts[uid] ?? 0) as int;
+                      }
+                    }
+                  }
+
+                  return Stack(
+                    clipBehavior: Clip.none,
+                    children: [
+                      const Icon(Icons.chat_bubble_outline),
+                      if (totalUnread > 0)
+                        Positioned(
+                          right: -8,
+                          top: -8,
+                          child: Container(
+                            padding: const EdgeInsets.all(4),
+                            decoration: const BoxDecoration(
+                              color: Color(0xFF25D366),
+                              shape: BoxShape.circle,
+                            ),
+                            constraints: const BoxConstraints(
+                              minWidth: 16,
+                              minHeight: 16,
+                            ),
+                            child: Text(
+                              totalUnread > 9 ? '9+' : totalUnread.toString(),
+                              style: const TextStyle(
+                                color: Colors.white,
+                                fontSize: 8,
+                                fontWeight: FontWeight.bold,
+                              ),
+                              textAlign: TextAlign.center,
+                            ),
+                          ),
+                        ),
+                    ],
+                  );
+                }
+              ),
+              activeIcon: StreamBuilder<QuerySnapshot>(
+                stream: FirebaseFirestore.instance
+                    .collection('chats')
+                    .where('participants', arrayContains: FirebaseAuth.instance.currentUser?.uid)
+                    .snapshots(),
+                builder: (context, snapshot) {
+                  int totalUnread = 0;
+                  if (snapshot.hasData) {
+                    final uid = FirebaseAuth.instance.currentUser?.uid;
+                    for (var doc in snapshot.data!.docs) {
+                      final data = doc.data() as Map<String, dynamic>;
+                      final unreadCounts = data['unreadCounts'] as Map<String, dynamic>?;
+                      if (unreadCounts != null && uid != null) {
+                        totalUnread += (unreadCounts[uid] ?? 0) as int;
+                      }
+                    }
+                  }
+
+                  return Stack(
+                    clipBehavior: Clip.none,
+                    children: [
+                      const Icon(Icons.chat_bubble),
+                      if (totalUnread > 0)
+                        Positioned(
+                          right: -8,
+                          top: -8,
+                          child: Container(
+                            padding: const EdgeInsets.all(4),
+                            decoration: const BoxDecoration(
+                              color: Color(0xFF25D366),
+                              shape: BoxShape.circle,
+                            ),
+                            constraints: const BoxConstraints(
+                              minWidth: 16,
+                              minHeight: 16,
+                            ),
+                            child: Text(
+                              totalUnread > 9 ? '9+' : totalUnread.toString(),
+                              style: const TextStyle(
+                                color: Colors.white,
+                                fontSize: 8,
+                                fontWeight: FontWeight.bold,
+                              ),
+                              textAlign: TextAlign.center,
+                            ),
+                          ),
+                        ),
+                    ],
+                  );
+                }
+              ),
               label: 'Messages',
             ),
             BottomNavigationBarItem(
@@ -1404,16 +1521,13 @@ class ContractorAlertsScreen extends StatefulWidget {
 }
 
 class _ContractorAlertsScreenState extends State<ContractorAlertsScreen> {
-  List<DocumentSnapshot> _alertsToShow = [];
-  bool _isLoadingAlerts = true;
-
   @override
   void initState() {
     super.initState();
-    _fetchAndMarkAlerts();
+    _markAlertsAsRead();
   }
 
-  Future<void> _fetchAndMarkAlerts() async {
+  Future<void> _markAlertsAsRead() async {
     final uid = FirebaseAuth.instance.currentUser?.uid;
     if (uid == null) return;
 
@@ -1422,15 +1536,7 @@ class _ContractorAlertsScreenState extends State<ContractorAlertsScreen> {
           .collection('notifications')
           .where('receiverId', isEqualTo: uid)
           .where('isRead', isEqualTo: false)
-          .where('type', isEqualTo: 'job_accepted')
           .get();
-
-      if (mounted) {
-        setState(() {
-          _alertsToShow = snapshots.docs;
-          _isLoadingAlerts = false;
-        });
-      }
 
       if (snapshots.docs.isNotEmpty) {
         final batch = FirebaseFirestore.instance.batch();
@@ -1440,17 +1546,70 @@ class _ContractorAlertsScreenState extends State<ContractorAlertsScreen> {
         await batch.commit();
       }
     } catch (e) {
-      debugPrint("Error fetching alerts: $e");
-      if (mounted) setState(() => _isLoadingAlerts = false);
+      debugPrint("Error marking contractor alerts as read: $e");
     }
+  }
+
+  final Map<String, String> _selectedLanguages = {};
+
+  String _getTranslation(String originalText, String lang) {
+    if (lang == 'en') return originalText;
+    
+    // Hindi Script Logic
+    if (lang == 'hi') {
+      final lowStr = originalText.toLowerCase();
+      if (lowStr.contains("hi") || lowStr.contains("hello")) return "नमस्ते! 👋";
+      if (lowStr.contains("3 pm") || lowStr.contains("3pm")) return "मैं ३ बजे पहुँच जाऊँगा।";
+      if (lowStr.contains("accept")) return "स्वीकृत: " + originalText;
+      return "हिन्दी: " + originalText;
+    }
+    
+    // Marathi Script Logic
+    if (lang == 'mr') {
+      final lowStr = originalText.toLowerCase();
+      if (lowStr.contains("hi") || lowStr.contains("hello")) return "नमस्कार! 👋";
+      if (lowStr.contains("3 pm") || lowStr.contains("3pm")) return "मी ३ वाजता पोहोचू शकेन।";
+      if (lowStr.contains("accept")) return "स्वीकारले: " + originalText;
+      return "मराठी: " + originalText;
+    }
+    
+    return originalText;
+  }
+
+  Widget _buildLangOption(String alertId, String label, String langCode) {
+    final bool isSelected = (_selectedLanguages[alertId] ?? 'en') == langCode;
+    return GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onTap: () {
+        setState(() {
+          _selectedLanguages[alertId] = langCode;
+        });
+      },
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+        decoration: BoxDecoration(
+          color: isSelected ? const Color(0xFFA5555A).withOpacity(0.1) : Colors.transparent,
+          borderRadius: BorderRadius.circular(4),
+        ),
+        child: Text(
+          label,
+          style: TextStyle(
+            fontSize: 10,
+            fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
+            color: isSelected ? const Color(0xFFA5555A) : Colors.grey,
+          ),
+        ),
+      ),
+    );
   }
 
   @override
   Widget build(BuildContext context) {
+    final uid = FirebaseAuth.instance.currentUser?.uid;
     return Scaffold(
       backgroundColor: const Color(0xFFFBFBFC),
       appBar: AppBar(
-        title: const Text('New Alerts', style: TextStyle(fontWeight: FontWeight.bold, color: Color(0xFF0F3A40))),
+        title: const Text('Notifications', style: TextStyle(fontWeight: FontWeight.bold, color: Color(0xFF0F3A40))),
         backgroundColor: Colors.white,
         elevation: 0,
         leading: IconButton(
@@ -1458,106 +1617,149 @@ class _ContractorAlertsScreenState extends State<ContractorAlertsScreen> {
           onPressed: () => Navigator.pop(context),
         ),
       ),
-      body: _isLoadingAlerts
-          ? const Center(child: CircularProgressIndicator())
-          : _alertsToShow.isEmpty
-              ? Center(
-                  child: Column(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      Icon(Icons.notifications_none, size: 64, color: Colors.grey.withOpacity(0.5)),
-                      const SizedBox(height: 16),
-                      const Text('No new alerts', style: TextStyle(color: Colors.grey, fontSize: 18)),
-                    ],
-                  ),
-                )
-              : ListView.builder(
-                  padding: const EdgeInsets.all(16),
-                  itemCount: _alertsToShow.length,
-                  itemBuilder: (context, index) {
-                    final doc = _alertsToShow[index];
-                    final data = doc.data() as Map<String, dynamic>;
-                    final timestamp = (data['timestamp'] as Timestamp?)?.toDate() ?? DateTime.now();
-                    final timeStr = "${timestamp.hour}:${timestamp.minute.toString().padLeft(2, '0')}";
+      body: StreamBuilder<QuerySnapshot>(
+        stream: FirebaseFirestore.instance
+            .collection('notifications')
+            .where('receiverId', isEqualTo: uid)
+            .snapshots(),
+        builder: (context, snapshot) {
+          if (snapshot.hasError) return Center(child: Text('Error: ${snapshot.error}'));
+          if (snapshot.connectionState == ConnectionState.waiting) return const Center(child: CircularProgressIndicator());
+          
+          if (!snapshot.hasData || snapshot.data!.docs.isEmpty) {
+            return Center(
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Icon(Icons.notifications_none, size: 64, color: Colors.grey.withOpacity(0.5)),
+                  const SizedBox(height: 16),
+                  const Text('No alerts yet', style: TextStyle(color: Colors.grey, fontSize: 18)),
+                ],
+              ),
+            );
+          }
 
-                    return Card(
-                      margin: const EdgeInsets.only(bottom: 12),
-                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-                      elevation: 0,
-                      color: Colors.white,
-                      child: Container(
-                        decoration: BoxDecoration(
-                          borderRadius: BorderRadius.circular(16),
-                          border: Border.all(color: Colors.grey.shade100),
+          final docs = snapshot.data!.docs;
+          docs.sort((a, b) {
+            final aTime = (a.data() as Map<String, dynamic>)['timestamp'] as Timestamp?;
+            final bTime = (b.data() as Map<String, dynamic>)['timestamp'] as Timestamp?;
+            if (aTime == null || bTime == null) return 0;
+            return bTime.compareTo(aTime);
+          });
+
+          return ListView.builder(
+            padding: const EdgeInsets.all(16),
+            itemCount: docs.length,
+            itemBuilder: (context, index) {
+              final doc = docs[index];
+              final data = doc.data() as Map<String, dynamic>;
+              final timestamp = (data['timestamp'] as Timestamp?)?.toDate() ?? DateTime.now();
+              final timeStr = "${timestamp.hour}:${timestamp.minute.toString().padLeft(2, '0')}";
+
+              return Card(
+                margin: const EdgeInsets.only(bottom: 12),
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                elevation: 0,
+                color: Colors.white,
+                child: Container(
+                  decoration: BoxDecoration(
+                    borderRadius: BorderRadius.circular(16),
+                    border: Border.all(color: Colors.grey.shade100),
+                  ),
+                  child: Column(
+                    children: [
+                      ListTile(
+                        contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                        leading: CircleAvatar(
+                          backgroundColor: const Color(0xFF0F3A40).withOpacity(0.1),
+                          child: Text(
+                            data['senderName']?[0].toUpperCase() ?? 'W',
+                            style: const TextStyle(color: Color(0xFF0F3A40), fontWeight: FontWeight.bold),
+                          ),
                         ),
-                        child: Column(
+                        title: Row(
+                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
                           children: [
-                            ListTile(
-                              contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                              leading: CircleAvatar(
-                                backgroundColor: const Color(0xFF0F3A40).withOpacity(0.1),
-                                child: Text(
-                                  data['senderName']?[0].toUpperCase() ?? 'W',
-                                  style: const TextStyle(color: Color(0xFF0F3A40), fontWeight: FontWeight.bold),
-                                ),
-                              ),
-                              title: Row(
-                                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                                children: [
-                                  Expanded(
-                                    child: Text(
-                                      data['senderName'] ?? 'Worker',
-                                      style: const TextStyle(fontWeight: FontWeight.bold),
-                                      overflow: TextOverflow.ellipsis,
-                                    ),
-                                  ),
-                                  const SizedBox(width: 8),
-                                  Text(timeStr, style: const TextStyle(fontSize: 12, color: Colors.grey)),
-                                ],
-                              ),
-                              subtitle: Padding(
-                                padding: const EdgeInsets.only(top: 4.0),
-                                child: Text(data['message'] ?? '', style: const TextStyle(color: Colors.black87)),
+                            Expanded(
+                              child: Text(
+                                data['senderName'] ?? 'Worker',
+                                style: const TextStyle(fontWeight: FontWeight.bold),
+                                overflow: TextOverflow.ellipsis,
                               ),
                             ),
+                            const SizedBox(width: 8),
+                            Text(timeStr, style: const TextStyle(fontSize: 12, color: Colors.grey)),
+                          ],
+                        ),
+                        subtitle: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
                             Padding(
-                              padding: const EdgeInsets.only(bottom: 12, right: 16),
-                              child: Row(
-                                mainAxisAlignment: MainAxisAlignment.end,
-                                children: [
-                                  TextButton.icon(
-                                    onPressed: () {
-                                      final contractorId = FirebaseAuth.instance.currentUser?.uid ?? '';
-                                      final workerId = data['senderId'] ?? '';
-                                      if (contractorId.isEmpty || workerId.isEmpty) return;
-
-                                      final ids = [contractorId, workerId];
-                                      ids.sort();
-                                      final chatId = ids.join('_');
-
-                                      Navigator.push(
-                                        context,
-                                        MaterialPageRoute(
-                                          builder: (context) => ChatConversationScreen(
-                                            chatId: chatId,
-                                            otherUserId: workerId,
-                                            otherUserName: data['senderName'] ?? 'Worker',
-                                          ),
-                                        ),
-                                      );
-                                    },
-                                    icon: const Icon(Icons.reply, size: 18, color: Color(0xFF0F3A40)),
-                                    label: const Text('Respond', style: TextStyle(color: Color(0xFF0F3A40), fontWeight: FontWeight.bold)),
-                                  ),
-                                ],
+                              padding: const EdgeInsets.only(top: 4.0),
+                              child: Text(
+                                _getTranslation(data['message'] ?? '', _selectedLanguages[doc.id] ?? 'en'),
+                                key: ValueKey('${doc.id}_${_selectedLanguages[doc.id] ?? 'en'}'),
+                                style: TextStyle(
+                                  color: (_selectedLanguages[doc.id] ?? 'en') != 'en' ? Colors.blueAccent : Colors.black87,
+                                  fontStyle: (_selectedLanguages[doc.id] ?? 'en') != 'en' ? FontStyle.italic : FontStyle.normal,
+                                ),
                               ),
+                            ),
+                            const SizedBox(height: 8),
+                            Row(
+                              children: [
+                                const Icon(Icons.translate, size: 10, color: Colors.grey),
+                                const SizedBox(width: 4),
+                                _buildLangOption(doc.id, 'En', 'en'),
+                                const Text(" | ", style: TextStyle(fontSize: 10, color: Colors.grey)),
+                                _buildLangOption(doc.id, 'Hi', 'hi'),
+                                const Text(" | ", style: TextStyle(fontSize: 10, color: Colors.grey)),
+                                _buildLangOption(doc.id, 'Mr', 'mr'),
+                              ],
                             ),
                           ],
                         ),
                       ),
-                    );
-                  },
+                      Padding(
+                        padding: const EdgeInsets.only(bottom: 12, right: 16),
+                        child: Row(
+                          mainAxisAlignment: MainAxisAlignment.end,
+                          children: [
+                            TextButton.icon(
+                              onPressed: () {
+                                final contractorId = FirebaseAuth.instance.currentUser?.uid ?? '';
+                                final workerId = data['senderId'] ?? '';
+                                if (contractorId.isEmpty || workerId.isEmpty) return;
+
+                                final ids = [contractorId, workerId];
+                                ids.sort();
+                                final chatId = ids.join('_');
+
+                                Navigator.push(
+                                  context,
+                                  MaterialPageRoute(
+                                    builder: (context) => ChatConversationScreen(
+                                      chatId: chatId,
+                                      otherUserId: workerId,
+                                      otherUserName: data['senderName'] ?? 'Worker',
+                                    ),
+                                  ),
+                                );
+                              },
+                              icon: const Icon(Icons.reply, size: 18, color: Color(0xFF0F3A40)),
+                              label: const Text('Respond', style: TextStyle(color: Color(0xFF0F3A40), fontWeight: FontWeight.bold)),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
                 ),
+              );
+            },
+          );
+        },
+      ),
     );
   }
 }

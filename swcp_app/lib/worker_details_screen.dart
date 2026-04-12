@@ -1,9 +1,11 @@
 import 'package:flutter/material.dart';
+import 'dart:convert';
 import 'package:url_launcher/url_launcher.dart';
 import 'chat_conversation_screen.dart';
 import 'post_job_screen.dart';
 import 'direct_post_job_screen.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:cached_network_image/cached_network_image.dart';
 
 class WorkerDetailsScreen extends StatelessWidget {
   final Map<String, dynamic> workerData;
@@ -70,12 +72,19 @@ class WorkerDetailsScreen extends StatelessWidget {
                   CircleAvatar(
                     radius: 50,
                     backgroundColor: const Color(0xFF0F3A40).withOpacity(0.1),
-                    child: Text(
-                      (workerData['name'] != null && workerData['name'].toString().isNotEmpty) 
-                        ? workerData['name'].toString()[0].toUpperCase() 
-                        : 'W',
-                      style: const TextStyle(fontSize: 40, fontWeight: FontWeight.bold, color: Color(0xFF0F3A40)),
-                    ),
+                    backgroundImage: (workerData['profileImageUrl'] != null && workerData['profileImageUrl'].toString().startsWith('data:image'))
+                        ? MemoryImage(base64Decode(workerData['profileImageUrl'].toString().split(',').last)) as ImageProvider
+                        : (workerData['profileImageUrl'] != null && workerData['profileImageUrl'].toString().isNotEmpty)
+                            ? CachedNetworkImageProvider(workerData['profileImageUrl'])
+                            : null,
+                    child: (workerData['profileImageUrl'] == null || workerData['profileImageUrl'].toString().isEmpty)
+                        ? Text(
+                            (workerData['name'] != null && workerData['name'].toString().isNotEmpty) 
+                              ? workerData['name'].toString()[0].toUpperCase() 
+                              : 'W',
+                            style: const TextStyle(fontSize: 40, fontWeight: FontWeight.bold, color: Color(0xFF0F3A40)),
+                          )
+                        : null,
                   ),
                   const SizedBox(height: 16),
                   Text(

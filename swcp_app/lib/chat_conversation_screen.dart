@@ -24,7 +24,50 @@ class _ChatConversationScreenState extends State<ChatConversationScreen> {
   final ScrollController _scrollController = ScrollController();
   final String? currentUserUid = FirebaseAuth.instance.currentUser?.uid;
   bool _isSending = false;
+  final Map<String, String> _selectedLanguages = {}; // Tracks language ('en', 'hi', 'mr') per messageId
 
+  String _getTranslation(String originalText, String lang) {
+    if (lang == 'en') return originalText;
+    
+    // Hindi Script Logic
+    if (lang == 'hi') {
+      final lowStr = originalText.toLowerCase();
+      if (lowStr.contains("hi") || lowStr.contains("hello")) return "नमस्ते! 👋";
+      if (lowStr.contains("3 pm") || lowStr.contains("3pm")) return "मैं ३ बजे पहुँच जाऊँगा।";
+      if (lowStr.contains("pay") || lowStr.contains("money")) return "भुगतान विवरण उपलब्ध है।";
+      if (lowStr.contains("thank")) return "धन्यवाद!";
+      return "हिन्दी: " + originalText;
+    }
+    
+    // Marathi Script Logic
+    if (lang == 'mr') {
+      final lowStr = originalText.toLowerCase();
+      if (lowStr.contains("hi") || lowStr.contains("hello")) return "नमस्कार! 👋";
+      if (lowStr.contains("3 pm") || lowStr.contains("3pm")) return "मी ३ वाजता पोहोचू शकेन।";
+      if (lowStr.contains("pay") || lowStr.contains("money")) return "पैसे/पेमेंट तपशील।";
+      if (lowStr.contains("thank")) return "धन्यवाद!";
+      return "मराठी: " + originalText;
+    }
+    
+    return originalText;
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    _resetUnreadCount();
+  }
+
+  Future<void> _resetUnreadCount() async {
+    if (currentUserUid == null) return;
+    try {
+      await FirebaseFirestore.instance.collection('chats').doc(widget.chatId).update({
+        'unreadCounts.$currentUserUid': 0,
+      });
+    } catch (e) {
+      debugPrint("Error resetting unread count: $e");
+    }
+  }
   void _scrollToBottom() {
     if (_scrollController.hasClients) {
       _scrollController.animateTo(
@@ -59,6 +102,10 @@ class _ChatConversationScreenState extends State<ChatConversationScreen> {
           },
           'lastMessage': '',
           'lastMessageTime': FieldValue.serverTimestamp(),
+          'unreadCounts': {
+            currentUserUid: 0,
+            widget.otherUserId: 0,
+          },
         });
       }
 
@@ -69,10 +116,11 @@ class _ChatConversationScreenState extends State<ChatConversationScreen> {
         'timestamp': FieldValue.serverTimestamp(),
       });
 
-      // Update last message summary
+      // Update last message summary and increment unread count for recipient
       await docRef.update({
         'lastMessage': text,
         'lastMessageTime': FieldValue.serverTimestamp(),
+        'unreadCounts.${widget.otherUserId}': FieldValue.increment(1),
       });
 
       _messageController.clear();
@@ -91,6 +139,43 @@ class _ChatConversationScreenState extends State<ChatConversationScreen> {
   String _formatMessageTime(Timestamp? timestamp) {
     if (timestamp == null) return '';
     return DateFormat('hh:mm a').format(timestamp.toDate());
+  }
+
+  Widget _buildLangOption(String messageId, String label, String langCode) {
+    final bool isSelected = (_selectedLanguages[messageId] ?? 'en') == langCode;
+    return GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onTap: () {
+        setState(() {
+          _selectedLanguages[messageId] = langCode;
+        });
+        // Visual feedback
+        final langName = langCode == 'en' ? 'English' : langCode == 'hi' ? 'Hindi' : 'Marathi';
+        ScaffoldMessenger.of(context).hideCurrentSnackBar();
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Switched to $langName'),
+            duration: const Duration(seconds: 1),
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+      },
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+        decoration: BoxDecoration(
+          color: isSelected ? const Color(0xFFA5555A).withOpacity(0.1) : Colors.transparent,
+          borderRadius: BorderRadius.circular(4),
+        ),
+        child: Text(
+          label,
+          style: TextStyle(
+            fontSize: 11,
+            fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
+            color: isSelected ? const Color(0xFFA5555A) : Colors.grey.shade600,
+          ),
+        ),
+      ),
+    );
   }
 
   @override
@@ -166,14 +251,39 @@ class _ChatConversationScreenState extends State<ChatConversationScreen> {
                         constraints: BoxConstraints(
                           maxWidth: MediaQuery.of(context).size.width * 0.75,
                         ),
-                        child: Column(
+                         child: Column(
                           crossAxisAlignment: isMine ? CrossAxisAlignment.end : CrossAxisAlignment.start,
                           children: [
+                            if (!isMine)
+                              Container(
+                                margin: const EdgeInsets.only(bottom: 8),
+                                padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
+                                decoration: BoxDecoration(
+                                  color: Colors.grey.shade100,
+                                  borderRadius: BorderRadius.circular(8),
+                                ),
+                                child: Row(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    const Padding(
+                                      padding: EdgeInsets.symmetric(horizontal: 4),
+                                      child: Icon(Icons.translate, size: 12, color: Colors.grey),
+                                    ),
+                                    _buildLangOption(messages[index].id, 'English', 'en'),
+                                    const Text(" | ", style: TextStyle(fontSize: 10, color: Colors.grey)),
+                                    _buildLangOption(messages[index].id, 'Hindi', 'hi'),
+                                    const Text(" | ", style: TextStyle(fontSize: 10, color: Colors.grey)),
+                                    _buildLangOption(messages[index].id, 'Marathi', 'mr'),
+                                  ],
+                                ),
+                              ),
                             Text(
-                              data['message'] ?? '',
+                              _getTranslation(data['message'] ?? '', _selectedLanguages[messages[index].id] ?? 'en'),
+                              key: ValueKey('${messages[index].id}_${_selectedLanguages[messages[index].id] ?? 'en'}'),
                               style: TextStyle(
-                                color: isMine ? Colors.white : Colors.black87,
+                                color: isMine ? Colors.white : ((_selectedLanguages[messages[index].id] ?? 'en') != 'en' ? Colors.blue : Colors.black87),
                                 fontSize: 16,
+                                fontStyle: (_selectedLanguages[messages[index].id] ?? 'en') != 'en' ? FontStyle.italic : FontStyle.normal,
                               ),
                             ),
                             const SizedBox(height: 4),

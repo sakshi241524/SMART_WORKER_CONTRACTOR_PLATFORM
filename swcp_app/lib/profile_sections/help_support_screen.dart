@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'ai_support_chat_screen.dart';
 
 class HelpSupportScreen extends StatelessWidget {
   const HelpSupportScreen({super.key});
@@ -27,10 +28,30 @@ class HelpSupportScreen extends StatelessWidget {
             ),
             const SizedBox(height: 10),
             const Text(
-              "If you have any issues or questions regarding our services, feel free to contact our support team.",
+              "Get instant answers 24/7 with our AI assistant or contact our team directly.",
               style: TextStyle(fontSize: 16, color: Colors.blueGrey),
             ),
-            const SizedBox(height: 30),
+            const SizedBox(height: 24),
+            SizedBox(
+              width: double.infinity,
+              child: ElevatedButton.icon(
+                onPressed: () {
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(builder: (context) => const AiSupportChatScreen()),
+                  );
+                },
+                icon: const Icon(Icons.auto_awesome),
+                label: const Text("Chat with AI Assistant", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: const Color(0xFF0F3A40),
+                  foregroundColor: Colors.white,
+                  padding: const EdgeInsets.symmetric(vertical: 16),
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15)),
+                ),
+              ),
+            ),
+            const SizedBox(height: 32),
             _buildContactCard(
               icon: Icons.phone,
               title: "Call Us",

@@ -1,6 +1,11 @@
+import 'dart:io';
+import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:image_picker/image_picker.dart';
+import 'package:cached_network_image/cached_network_image.dart';
+import '../services/storage_service.dart';
 import '../data/india_data.dart';
 
 class PersonalInfoScreen extends StatefulWidget {
@@ -15,6 +20,9 @@ class _PersonalInfoScreenState extends State<PersonalInfoScreen> {
   
   String _name = "...";
   String _email = "...";
+  String? _profileImageUrl;
+  bool _isUploading = false;
+  final StorageService _storageService = StorageService();
   final TextEditingController _phoneController = TextEditingController();
   final TextEditingController _addressController = TextEditingController();
   final TextEditingController _educationController = TextEditingController();
@@ -25,6 +33,7 @@ class _PersonalInfoScreenState extends State<PersonalInfoScreen> {
   String? _selectedDistrict;
 
   bool _isLoading = false;
+  bool _hasChanges = false;
 
   @override
   void initState() {
@@ -41,6 +50,7 @@ class _PersonalInfoScreenState extends State<PersonalInfoScreen> {
       if (doc.exists) {
         final data = doc.data() as Map<String, dynamic>;
         _name = data['name'] ?? "";
+        _profileImageUrl = data.containsKey('profileImageUrl') ? data['profileImageUrl'] : null;
         _phoneController.text = data['phone'] ?? "";
         _addressController.text = data['address'] ?? "";
         _educationController.text = data['education'] ?? "";
@@ -95,6 +105,10 @@ class _PersonalInfoScreenState extends State<PersonalInfoScreen> {
         backgroundColor: Colors.white,
         foregroundColor: Colors.black,
         elevation: 0,
+        leading: IconButton(
+          icon: const Icon(Icons.arrow_back),
+          onPressed: () => Navigator.pop(context, _hasChanges),
+        ),
       ),
       body: _isLoading 
         ? const Center(child: CircularProgressIndicator())
@@ -105,6 +119,55 @@ class _PersonalInfoScreenState extends State<PersonalInfoScreen> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
+                  Center(
+                    child: Stack(
+                      children: [
+                        GestureDetector(
+                          onTap: _pickAndUploadImage,
+                          child: CircleAvatar(
+                            radius: 60,
+                            backgroundColor: const Color(0xFF0F3A40).withOpacity(0.1),
+                            backgroundImage: (_profileImageUrl != null && _profileImageUrl!.startsWith('data:image'))
+                                ? MemoryImage(base64Decode(_profileImageUrl!.split(',').last)) as ImageProvider
+                                : (_profileImageUrl != null && _profileImageUrl!.isNotEmpty)
+                                    ? CachedNetworkImageProvider(_profileImageUrl!)
+                                    : null,
+                            child: (_profileImageUrl == null || _profileImageUrl!.isEmpty)
+                                ? const Icon(Icons.person, size: 60, color: Color(0xFF0F3A40))
+                                : null,
+                          ),
+                        ),
+                        if (_isUploading)
+                          Positioned.fill(
+                            child: Container(
+                              decoration: BoxDecoration(
+                                color: Colors.black26,
+                                borderRadius: BorderRadius.circular(60),
+                              ),
+                              child: const Center(
+                                child: CircularProgressIndicator(color: Colors.white),
+                              ),
+                            ),
+                          ),
+                        Positioned(
+                          bottom: 0,
+                          right: 0,
+                          child: GestureDetector(
+                            onTap: _pickAndUploadImage,
+                            child: Container(
+                              padding: const EdgeInsets.all(8),
+                              decoration: const BoxDecoration(
+                                color: Color(0xFF0F3A40),
+                                shape: BoxShape.circle,
+                              ),
+                              child: const Icon(Icons.camera_alt, size: 20, color: Colors.white),
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: 30),
                   _buildReadOnlyField("Name", _name),
                   const SizedBox(height: 15),
                   _buildReadOnlyField("Email", _email),
@@ -289,5 +352,43 @@ class _PersonalInfoScreenState extends State<PersonalInfoScreen> {
         ),
       ],
     );
+  }
+
+  Future<void> _pickAndUploadImage() async {
+    if (_isUploading) return;
+
+    final ImagePicker picker = ImagePicker();
+    final XFile? image = await picker.pickImage(
+      source: ImageSource.gallery,
+      imageQuality: 70,
+    );
+
+    if (image != null) {
+      if (mounted) setState(() => _isUploading = true);
+      
+      final user = FirebaseAuth.instance.currentUser;
+      if (user != null) {
+        final result = await _storageService.uploadProfileImage(File(image.path), user.uid);
+        if (result.success && result.downloadUrl != null) {
+          if (mounted) {
+            setState(() {
+              _profileImageUrl = result.downloadUrl;
+              _hasChanges = true;
+            });
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(content: Text('Profile image updated successfully!')),
+            );
+          }
+        } else {
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(content: Text('Upload failed: ${result.error ?? "Unknown error"}')),
+            );
+          }
+        }
+      }
+      
+      if (mounted) setState(() => _isUploading = false);
+    }
   }
 }

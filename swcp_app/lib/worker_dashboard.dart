@@ -6,11 +6,14 @@ import 'worker_details_screen.dart';
 import 'worker_profile_screen.dart';
 import 'job_details_worker_screen.dart';
 import 'role_selection_screen.dart';
+import 'dart:convert';
+import 'package:cached_network_image/cached_network_image.dart';
 import 'package:provider/provider.dart';
 import 'app_state.dart';
 import 'services/job_ranking_engine.dart';
 import 'package:geolocator/geolocator.dart';
 import 'chats_list_screen.dart';
+import 'profile_sections/ai_support_chat_screen.dart';
 
 class WorkerDashboard extends StatefulWidget {
   final int initialIndex;
@@ -23,6 +26,7 @@ class WorkerDashboard extends StatefulWidget {
 class _WorkerDashboardState extends State<WorkerDashboard> {
   late int _selectedIndex;
   String _userName = "...";
+  String? _profileImageUrl;
   List<String> _workerSkills = [];
   bool _isWorkerActive = true;
   bool _isUpdating = false;
@@ -111,6 +115,7 @@ class _WorkerDashboardState extends State<WorkerDashboard> {
       if (doc.exists && mounted) {
         setState(() {
           _userName = doc.get('name') ?? "Worker";
+          _profileImageUrl = doc.data()?.containsKey('profileImageUrl') == true ? doc.get('profileImageUrl') : null;
           _workerSkills = List<String>.from(doc.get('skills') ?? []);
           final status = doc.get('status') ?? 'active';
           _isWorkerActive = status == 'active';
@@ -251,38 +256,53 @@ class _WorkerDashboardState extends State<WorkerDashboard> {
                 Row(
                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
-                    Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Row(
-                          children: [
-                            const Text(
-                              'Your Status',
-                              style: TextStyle(color: Colors.white70, fontSize: 16),
-                            ),
-                            const SizedBox(width: 8),
-                            if (_isSharingLocation) ...[
-                              const Icon(Icons.location_on, size: 12, color: Colors.greenAccent),
-                              const SizedBox(width: 4),
-                              Text(_locationStatus ?? "Live", style: const TextStyle(color: Colors.greenAccent, fontSize: 10, fontWeight: FontWeight.bold)),
-                            ] else if (_locationStatus != null) ...[
-                              const Icon(Icons.location_off, size: 12, color: Colors.amberAccent),
-                              const SizedBox(width: 4),
-                              Text(_locationStatus!, style: const TextStyle(color: Colors.amberAccent, fontSize: 10)),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Row(
+                            children: [
+                              const Text(
+                                'Your Status',
+                                style: TextStyle(color: Colors.white70, fontSize: 16),
+                              ),
+                              const SizedBox(width: 8),
+                              if (_isSharingLocation) ...[
+                                const Icon(Icons.location_on, size: 12, color: Colors.greenAccent),
+                                const SizedBox(width: 4),
+                                Flexible(
+                                  child: Text(
+                                    _locationStatus ?? "Live", 
+                                    style: const TextStyle(color: Colors.greenAccent, fontSize: 10, fontWeight: FontWeight.bold),
+                                    overflow: TextOverflow.ellipsis,
+                                  ),
+                                ),
+                              ] else if (_locationStatus != null) ...[
+                                const Icon(Icons.location_off, size: 12, color: Colors.amberAccent),
+                                const SizedBox(width: 4),
+                                Flexible(
+                                  child: Text(
+                                    _locationStatus!, 
+                                    style: const TextStyle(color: Colors.amberAccent, fontSize: 10),
+                                    overflow: TextOverflow.ellipsis,
+                                  ),
+                                ),
+                              ],
                             ],
-                          ],
-                        ),
-                        const SizedBox(height: 8),
-                        Text(
-                          _isWorkerActive ? 'ACTIVE NOW' : 'INACTIVE',
-                          style: const TextStyle(
-                            color: Colors.white,
-                            fontSize: 28,
-                            fontWeight: FontWeight.bold,
-                            letterSpacing: 1.2,
                           ),
-                        ),
-                      ],
+                          const SizedBox(height: 8),
+                          Text(
+                            _isWorkerActive ? 'ACTIVE NOW' : 'INACTIVE',
+                            style: const TextStyle(
+                              color: Colors.white,
+                              fontSize: 28,
+                              fontWeight: FontWeight.bold,
+                              letterSpacing: 1.2,
+                            ),
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ],
+                      ),
                     ),
                     Container(
                       padding: const EdgeInsets.all(12),
@@ -497,10 +517,14 @@ class _WorkerDashboardState extends State<WorkerDashboard> {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Text(data['jobName'] ?? 'Untitled Job', 
-                          style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: Color(0xFF0F3A40))),
+                          style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: Color(0xFF0F3A40)),
+                          overflow: TextOverflow.ellipsis,
+                          maxLines: 1),
                       const SizedBox(height: 4),
                       Text('By: ${data['contractorName'] ?? data['constructorName'] ?? 'Contractor'}', 
-                          style: const TextStyle(color: Colors.grey, fontSize: 14)),
+                          style: const TextStyle(color: Colors.grey, fontSize: 14),
+                          overflow: TextOverflow.ellipsis,
+                          maxLines: 1),
                     ],
                   ),
                 ),
@@ -768,11 +792,42 @@ class _WorkerDashboardState extends State<WorkerDashboard> {
               }
             },
           ),
-          title: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
+          title: Row(
             children: [
-              Text('Hi $_userName', style: const TextStyle(fontSize: 14, color: Colors.grey)),
-              Text(_getAppBarTitle(context), style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 22, color: Color(0xFF0F3A40))),
+              GestureDetector(
+                onTap: () => setState(() => _selectedIndex = 3), // Navigate to profile
+                child: CircleAvatar(
+                  radius: 20,
+                  backgroundColor: const Color(0xFF0F3A40).withOpacity(0.1),
+                  backgroundImage: (_profileImageUrl != null && _profileImageUrl!.startsWith('data:image'))
+                      ? MemoryImage(base64Decode(_profileImageUrl!.split(',').last)) as ImageProvider
+                      : (_profileImageUrl != null && _profileImageUrl!.isNotEmpty)
+                          ? CachedNetworkImageProvider(_profileImageUrl!)
+                          : null,
+                  child: (_profileImageUrl == null || _profileImageUrl!.isEmpty)
+                      ? Text(
+                          (_userName.isNotEmpty) ? _userName[0].toUpperCase() : 'W',
+                          style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Color(0xFF0F3A40)),
+                        )
+                      : null,
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text('Hi $_userName', 
+                        style: const TextStyle(fontSize: 14, color: Colors.grey),
+                        overflow: TextOverflow.ellipsis,
+                        maxLines: 1),
+                    Text(_getAppBarTitle(context), 
+                        style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 18, color: Color(0xFF0F3A40)),
+                        overflow: TextOverflow.ellipsis,
+                        maxLines: 1),
+                  ],
+                ),
+              ),
             ],
           ),
           backgroundColor: Colors.white,
@@ -879,8 +934,108 @@ class _WorkerDashboardState extends State<WorkerDashboard> {
               label: 'Jobs',
             ),
             BottomNavigationBarItem(
-              icon: const Icon(Icons.chat_bubble_outline),
-              activeIcon: const Icon(Icons.chat_bubble),
+              icon: StreamBuilder<QuerySnapshot>(
+                stream: FirebaseFirestore.instance
+                    .collection('chats')
+                    .where('participants', arrayContains: FirebaseAuth.instance.currentUser?.uid)
+                    .snapshots(),
+                builder: (context, snapshot) {
+                  int totalUnread = 0;
+                  if (snapshot.hasData) {
+                    final uid = FirebaseAuth.instance.currentUser?.uid;
+                    for (var doc in snapshot.data!.docs) {
+                      final data = doc.data() as Map<String, dynamic>;
+                      final unreadCounts = data['unreadCounts'] as Map<String, dynamic>?;
+                      if (unreadCounts != null && uid != null) {
+                        totalUnread += (unreadCounts[uid] ?? 0) as int;
+                      }
+                    }
+                  }
+
+                  return Stack(
+                    clipBehavior: Clip.none,
+                    children: [
+                      const Icon(Icons.chat_bubble_outline),
+                      if (totalUnread > 0)
+                        Positioned(
+                          right: -8,
+                          top: -8,
+                          child: Container(
+                            padding: const EdgeInsets.all(4),
+                            decoration: const BoxDecoration(
+                              color: Color(0xFF25D366),
+                              shape: BoxShape.circle,
+                            ),
+                            constraints: const BoxConstraints(
+                              minWidth: 16,
+                              minHeight: 16,
+                            ),
+                            child: Text(
+                              totalUnread > 9 ? '9+' : totalUnread.toString(),
+                              style: const TextStyle(
+                                color: Colors.white,
+                                fontSize: 8,
+                                fontWeight: FontWeight.bold,
+                              ),
+                              textAlign: TextAlign.center,
+                            ),
+                          ),
+                        ),
+                    ],
+                  );
+                }
+              ),
+              activeIcon: StreamBuilder<QuerySnapshot>(
+                stream: FirebaseFirestore.instance
+                    .collection('chats')
+                    .where('participants', arrayContains: FirebaseAuth.instance.currentUser?.uid)
+                    .snapshots(),
+                builder: (context, snapshot) {
+                  int totalUnread = 0;
+                  if (snapshot.hasData) {
+                    final uid = FirebaseAuth.instance.currentUser?.uid;
+                    for (var doc in snapshot.data!.docs) {
+                      final data = doc.data() as Map<String, dynamic>;
+                      final unreadCounts = data['unreadCounts'] as Map<String, dynamic>?;
+                      if (unreadCounts != null && uid != null) {
+                        totalUnread += (unreadCounts[uid] ?? 0) as int;
+                      }
+                    }
+                  }
+
+                  return Stack(
+                    clipBehavior: Clip.none,
+                    children: [
+                      const Icon(Icons.chat_bubble),
+                      if (totalUnread > 0)
+                        Positioned(
+                          right: -8,
+                          top: -8,
+                          child: Container(
+                            padding: const EdgeInsets.all(4),
+                            decoration: const BoxDecoration(
+                              color: Color(0xFF25D366),
+                              shape: BoxShape.circle,
+                            ),
+                            constraints: const BoxConstraints(
+                              minWidth: 16,
+                              minHeight: 16,
+                            ),
+                            child: Text(
+                              totalUnread > 9 ? '9+' : totalUnread.toString(),
+                              style: const TextStyle(
+                                color: Colors.white,
+                                fontSize: 8,
+                                fontWeight: FontWeight.bold,
+                              ),
+                              textAlign: TextAlign.center,
+                            ),
+                          ),
+                        ),
+                    ],
+                  );
+                }
+              ),
               label: 'Messages',
             ),
             BottomNavigationBarItem(
@@ -936,6 +1091,59 @@ class _WorkerAlertsScreenState extends State<WorkerAlertsScreen> {
     } catch (e) {
       debugPrint("Error marking worker alerts as read: $e");
     }
+  }
+
+  final Map<String, String> _selectedLanguages = {};
+
+  String _getTranslation(String originalText, String lang) {
+    if (lang == 'en') return originalText;
+    
+    // Hindi Script Logic
+    if (lang == 'hi') {
+      final lowStr = originalText.toLowerCase();
+      if (lowStr.contains("hi") || lowStr.contains("hello")) return "नमस्ते! 👋";
+      if (lowStr.contains("3 pm") || lowStr.contains("3pm")) return "मैं ३ बजे पहुँच जाऊँगा।";
+      if (lowStr.contains("job") || lowStr.contains("post")) return "नया कार्य उपलब्ध!";
+      return "हिन्दी: " + originalText;
+    }
+    
+    // Marathi Script Logic
+    if (lang == 'mr') {
+      final lowStr = originalText.toLowerCase();
+      if (lowStr.contains("hi") || lowStr.contains("hello")) return "नमस्कार! 👋";
+      if (lowStr.contains("3 pm") || lowStr.contains("3pm")) return "मी ३ वाजता पोहोचू शकेन।";
+      if (lowStr.contains("job") || lowStr.contains("post")) return "नवीन काम उपलब्ध!";
+      return "मराठी: " + originalText;
+    }
+    
+    return originalText;
+  }
+
+  Widget _buildLangOption(String alertId, String label, String langCode) {
+    final bool isSelected = (_selectedLanguages[alertId] ?? 'en') == langCode;
+    return GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onTap: () {
+        setState(() {
+          _selectedLanguages[alertId] = langCode;
+        });
+      },
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+        decoration: BoxDecoration(
+          color: isSelected ? const Color(0xFFA5555A).withOpacity(0.1) : Colors.transparent,
+          borderRadius: BorderRadius.circular(4),
+        ),
+        child: Text(
+          label,
+          style: TextStyle(
+            fontSize: 10,
+            fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
+            color: isSelected ? const Color(0xFFA5555A) : Colors.grey,
+          ),
+        ),
+      ),
+    );
   }
 
   @override
@@ -1014,13 +1222,45 @@ class _WorkerAlertsScreenState extends State<WorkerAlertsScreen> {
                         title: Row(
                           mainAxisAlignment: MainAxisAlignment.spaceBetween,
                           children: [
-                            Text(data['senderName'] ?? data['contractorName'] ?? 'Contractor', style: const TextStyle(fontWeight: FontWeight.bold)),
+                            Expanded(
+                              child: Text(
+                                data['senderName'] ?? data['contractorName'] ?? 'Contractor', 
+                                style: const TextStyle(fontWeight: FontWeight.bold),
+                                overflow: TextOverflow.ellipsis,
+                                maxLines: 1,
+                              ),
+                            ),
+                            const SizedBox(width: 8),
                             Text(timeStr, style: const TextStyle(fontSize: 12, color: Colors.grey)),
                           ],
                         ),
-                        subtitle: Padding(
-                          padding: const EdgeInsets.only(top: 4.0),
-                          child: Text(data['message'] ?? '', style: const TextStyle(color: Colors.black87)),
+                        subtitle: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Padding(
+                              padding: const EdgeInsets.only(top: 4.0),
+                              child: Text(
+                                _getTranslation(data['message'] ?? '', _selectedLanguages[doc.id] ?? 'en'),
+                                key: ValueKey('${doc.id}_${_selectedLanguages[doc.id] ?? 'en'}'),
+                                style: TextStyle(
+                                  color: (_selectedLanguages[doc.id] ?? 'en') != 'en' ? Colors.blueAccent : Colors.black87,
+                                  fontStyle: (_selectedLanguages[doc.id] ?? 'en') != 'en' ? FontStyle.italic : FontStyle.normal,
+                                ),
+                              ),
+                            ),
+                            const SizedBox(height: 8),
+                            Row(
+                              children: [
+                                const Icon(Icons.translate, size: 10, color: Colors.grey),
+                                const SizedBox(width: 4),
+                                _buildLangOption(doc.id, 'En', 'en'),
+                                const Text(" | ", style: TextStyle(fontSize: 10, color: Colors.grey)),
+                                _buildLangOption(doc.id, 'Hi', 'hi'),
+                                const Text(" | ", style: TextStyle(fontSize: 10, color: Colors.grey)),
+                                _buildLangOption(doc.id, 'Mr', 'mr'),
+                              ],
+                            ),
+                          ],
                         ),
                       ),
                       Padding(
