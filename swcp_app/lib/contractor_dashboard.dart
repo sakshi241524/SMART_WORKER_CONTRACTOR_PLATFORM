@@ -16,7 +16,10 @@ import 'services/recommendation_engine.dart';
 import 'data/india_data.dart';
 import 'chats_list_screen.dart';
 import 'profile_sections/ai_support_chat_screen.dart';
+import 'package:google_maps_flutter/google_maps_flutter.dart';
 import 'chat_conversation_screen.dart';
+import 'track_worker_screen.dart';
+import 'services/translation_helper.dart';
 
 class ContractorDashboard extends StatefulWidget {
   final int initialIndex;
@@ -882,7 +885,7 @@ class _ContractorDashboardState extends State<ContractorDashboard> {
                                   if (joinedUids.isEmpty)
                                     const Text('  No workers yet', style: TextStyle(color: Colors.grey, fontSize: 13, fontStyle: FontStyle.italic))
                                   else
-                                    ...joinedUids.map((uid) => _buildWorkerNameItem(uid)),
+                                    ...joinedUids.map((uid) => _buildWorkerNameItem(uid, doc.id, data)),
                                 ],
                               ),
                             );
@@ -964,7 +967,7 @@ class _ContractorDashboardState extends State<ContractorDashboard> {
     }
   }
 
-  Widget _buildWorkerNameItem(String uid) {
+  Widget _buildWorkerNameItem(String uid, String jobId, Map<String, dynamic> jobData) {
     return FutureBuilder<DocumentSnapshot>(
       future: FirebaseFirestore.instance.collection('users').doc(uid).get(),
       builder: (context, snapshot) {
@@ -977,49 +980,98 @@ class _ContractorDashboardState extends State<ContractorDashboard> {
         
         return Padding(
           padding: const EdgeInsets.only(left: 8.0, top: 4.0),
-          child: Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          child: Column(
             children: [
-              Expanded(
-                child: Row(
-                  children: [
-                    const Icon(Icons.check_circle, size: 14, color: Colors.green),
-                    const SizedBox(width: 8),
-                    Expanded(
-                      child: Text(
-                        name, 
-                        style: const TextStyle(fontSize: 14),
-                        overflow: TextOverflow.ellipsis,
-                      ),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  Expanded(
+                    child: Row(
+                      children: [
+                        const Icon(Icons.check_circle, size: 14, color: Colors.green),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: Text(
+                            name, 
+                            style: const TextStyle(fontSize: 14, fontWeight: FontWeight.bold),
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ),
+                      ],
                     ),
-                  ],
-                ),
-              ),
-              const SizedBox(width: 8),
-              TextButton(
-                onPressed: () {
-                  Navigator.push(
-                    context,
-                    MaterialPageRoute(
-                      builder: (context) => WorkerDetailsScreen(
-                        workerData: workerData,
-                        contractorName: _userName,
+                  ),
+                  Row(
+                    children: [
+                      // Tracking Button - Only shows if tracking is active for this worker on this job
+                      StreamBuilder<DocumentSnapshot>(
+                        stream: FirebaseFirestore.instance.collection('jobs').doc(jobId).snapshots(),
+                        builder: (context, jobSnapshot) {
+                          if (!jobSnapshot.hasData) return Container();
+                          
+                          final jData = jobSnapshot.data!.data() as Map<String, dynamic>?;
+                          final tracking = jData?['tracking']?[uid] as Map<String, dynamic>?;
+                          
+                          if (tracking != null && tracking['isActive'] == true) {
+                            return Padding(
+                              padding: const EdgeInsets.only(right: 8.0),
+                              child: TextButton.icon(
+                                onPressed: () {
+                                  Navigator.push(
+                                    context,
+                                    MaterialPageRoute(
+                                      builder: (context) => TrackWorkerScreen(
+                                        workerUid: uid,
+                                        workerName: name,
+                                        jobId: jobId,
+                                        jobLocation: LatLng(jobData['latitude'] ?? 0, jobData['longitude'] ?? 0),
+                                        jobAddress: jobData['address'] ?? 'Job Site',
+                                      ),
+                                    ),
+                                  );
+                                },
+                                icon: const Icon(Icons.location_on, size: 14, color: Colors.blue),
+                                label: const Text("Track Live", style: TextStyle(fontSize: 12, color: Colors.blue, fontWeight: FontWeight.bold)),
+                                style: TextButton.styleFrom(
+                                  backgroundColor: Colors.blue.withOpacity(0.1),
+                                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 0),
+                                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+                                ),
+                              ),
+                            );
+                          }
+                          return Container();
+                        },
                       ),
-                    ),
-                  );
-                },
-                style: TextButton.styleFrom(
-                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 0),
-                  minimumSize: Size.zero,
-                  tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                ),
-                child: const Text('View Details', style: TextStyle(fontSize: 12, color: Color(0xFF0F3A40), fontWeight: FontWeight.bold)),
+                      TextButton(
+                        onPressed: () {
+                          Navigator.push(
+                            context,
+                            MaterialPageRoute(
+                              builder: (context) => ChatConversationScreen(
+                                chatId: _getChatId(FirebaseAuth.instance.currentUser!.uid, uid),
+                                otherUserId: uid,
+                                otherUserName: name,
+                              ),
+                            ),
+                          );
+                        },
+                        child: const Text('Message', style: TextStyle(fontSize: 12, color: Color(0xFF0F3A40))),
+                      ),
+                    ],
+                  ),
+                ],
               ),
             ],
           ),
         );
       },
     );
+  }
+
+  String _getChatId(String id1, String id2) {
+    final ids = [id1, id2];
+    ids.sort();
+    return ids.join('_');
   }
 
   Future<void> _manualCloseJob(String jobId) async {
@@ -1549,31 +1601,10 @@ class _ContractorAlertsScreenState extends State<ContractorAlertsScreen> {
       debugPrint("Error marking contractor alerts as read: $e");
     }
   }
-
   final Map<String, String> _selectedLanguages = {};
 
   String _getTranslation(String originalText, String lang) {
-    if (lang == 'en') return originalText;
-    
-    // Hindi Script Logic
-    if (lang == 'hi') {
-      final lowStr = originalText.toLowerCase();
-      if (lowStr.contains("hi") || lowStr.contains("hello")) return "नमस्ते! 👋";
-      if (lowStr.contains("3 pm") || lowStr.contains("3pm")) return "मैं ३ बजे पहुँच जाऊँगा।";
-      if (lowStr.contains("accept")) return "स्वीकृत: " + originalText;
-      return "हिन्दी: " + originalText;
-    }
-    
-    // Marathi Script Logic
-    if (lang == 'mr') {
-      final lowStr = originalText.toLowerCase();
-      if (lowStr.contains("hi") || lowStr.contains("hello")) return "नमस्कार! 👋";
-      if (lowStr.contains("3 pm") || lowStr.contains("3pm")) return "मी ३ वाजता पोहोचू शकेन।";
-      if (lowStr.contains("accept")) return "स्वीकारले: " + originalText;
-      return "मराठी: " + originalText;
-    }
-    
-    return originalText;
+    return TranslationHelper.translate(originalText, lang);
   }
 
   Widget _buildLangOption(String alertId, String label, String langCode) {
@@ -1639,11 +1670,32 @@ class _ContractorAlertsScreenState extends State<ContractorAlertsScreen> {
             );
           }
 
-          final docs = snapshot.data!.docs;
+          final allDocs = snapshot.data!.docs;
+          final docs = allDocs.where((doc) {
+            final data = doc.data() as Map<String, dynamic>;
+            return data['isDeleted'] != true;
+          }).toList();
+          
+          if (docs.isEmpty) {
+            return Center(
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Icon(Icons.notifications_none, size: 64, color: Colors.grey.withOpacity(0.5)),
+                  const SizedBox(height: 16),
+                  const Text('No alerts yet', style: TextStyle(color: Colors.grey, fontSize: 18)),
+                ],
+              ),
+            );
+          }
+          
           docs.sort((a, b) {
-            final aTime = (a.data() as Map<String, dynamic>)['timestamp'] as Timestamp?;
-            final bTime = (b.data() as Map<String, dynamic>)['timestamp'] as Timestamp?;
-            if (aTime == null || bTime == null) return 0;
+            final aData = a.data() as Map<String, dynamic>;
+            final bData = b.data() as Map<String, dynamic>;
+            final aTime = aData['timestamp'] as Timestamp?;
+            final bTime = bData['timestamp'] as Timestamp?;
+            if (aTime == null) return 1;
+            if (bTime == null) return -1;
             return bTime.compareTo(aTime);
           });
 
@@ -1673,7 +1725,9 @@ class _ContractorAlertsScreenState extends State<ContractorAlertsScreen> {
                         leading: CircleAvatar(
                           backgroundColor: const Color(0xFF0F3A40).withOpacity(0.1),
                           child: Text(
-                            data['senderName']?[0].toUpperCase() ?? 'W',
+                            (data['senderName'] != null && data['senderName'].toString().isNotEmpty) 
+                                ? data['senderName'].toString()[0].toUpperCase() 
+                                : 'W',
                             style: const TextStyle(color: Color(0xFF0F3A40), fontWeight: FontWeight.bold),
                           ),
                         ),
@@ -1681,10 +1735,25 @@ class _ContractorAlertsScreenState extends State<ContractorAlertsScreen> {
                           mainAxisAlignment: MainAxisAlignment.spaceBetween,
                           children: [
                             Expanded(
-                              child: Text(
-                                data['senderName'] ?? 'Worker',
-                                style: const TextStyle(fontWeight: FontWeight.bold),
-                                overflow: TextOverflow.ellipsis,
+                              child: Row(
+                                children: [
+                                  Expanded(
+                                    child: Text(
+                                      data['senderName'] ?? 'Worker',
+                                      style: const TextStyle(fontWeight: FontWeight.bold),
+                                      overflow: TextOverflow.ellipsis,
+                                    ),
+                                  ),
+                                  if (data['isRead'] == false)
+                                    Padding(
+                                      padding: const EdgeInsets.only(left: 8.0),
+                                      child: Container(
+                                        width: 8,
+                                        height: 8,
+                                        decoration: const BoxDecoration(color: Colors.blue, shape: BoxShape.circle),
+                                      ),
+                                    ),
+                                ],
                               ),
                             ),
                             const SizedBox(width: 8),

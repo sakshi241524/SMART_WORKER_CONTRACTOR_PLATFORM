@@ -177,14 +177,17 @@ class _PostJobScreenState extends State<PostJobScreen> {
         'acceptedWorkers': _selectedWorkers.map((key, value) => MapEntry(key, [])),
         'targetedWorkerIds': targetedWorkerIds, // Targeted dispatch
         'status': 'open',
+        'latitude': _contractorLat,
+        'longitude': _contractorLng,
         'createdAt': FieldValue.serverTimestamp(),
       });
 
       // Broadcast message to targeted workers
       final String companyName = _contractorNameController.text.trim().isNotEmpty ? _contractorNameController.text.trim() : 'A Contractor';
-      for (String workerId in targetedWorkerIds) {
+      for (String receiverId in targetedWorkerIds) {
         await FirebaseFirestore.instance.collection('notifications').add({
-          'workerId': workerId,
+          'receiverId': receiverId,
+          'workerId': receiverId,
           'senderId': uid,
           'senderName': companyName,
           'type': 'job_invitation',

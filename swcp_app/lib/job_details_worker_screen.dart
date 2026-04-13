@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:intl/intl.dart';
+import 'package:geolocator/geolocator.dart';
+import 'dart:async';
 import 'chat_conversation_screen.dart';
 
 class JobDetailsWorkerScreen extends StatefulWidget {
@@ -18,6 +20,17 @@ class _JobDetailsWorkerScreenState extends State<JobDetailsWorkerScreen> {
   bool _isAccepting = false;
   bool _isRejecting = false;
   String? _selectedProfession;
+  
+  // Tracking state
+  bool _isOnTheWay = false;
+  StreamSubscription<Position>? _positionStreamSubscription;
+  bool _isStopping = false;
+
+  @override
+  void dispose() {
+    _positionStreamSubscription?.cancel();
+    super.dispose();
+  }
 
   Future<void> _acceptJob() async {
     final uid = FirebaseAuth.instance.currentUser?.uid;
@@ -161,6 +174,84 @@ class _JobDetailsWorkerScreenState extends State<JobDetailsWorkerScreen> {
       }
     } finally {
       if (mounted) setState(() => _isRejecting = false);
+    }
+  }
+
+  Future<void> _startJourney() async {
+    final uid = FirebaseAuth.instance.currentUser?.uid;
+    if (uid == null) return;
+
+    try {
+      LocationPermission permission = await Geolocator.checkPermission();
+      if (permission == LocationPermission.denied) {
+        permission = await Geolocator.requestPermission();
+        if (permission == LocationPermission.denied) throw "Location permissions are denied";
+      }
+      
+      if (permission == LocationPermission.deniedForever) {
+        throw "Location permissions are permanently denied, we cannot share your location.";
+      }
+
+      setState(() => _isOnTheWay = true);
+
+      // Initialize tracking in Firestore
+      await FirebaseFirestore.instance.collection('jobs').doc(widget.jobId).update({
+        'tracking.$uid': {
+          'isActive': true,
+          'lastUpdate': FieldValue.serverTimestamp(),
+          'workerName': FirebaseAuth.instance.currentUser?.displayName ?? 'Worker',
+        }
+      });
+
+      _positionStreamSubscription = Geolocator.getPositionStream(
+        locationSettings: const LocationSettings(
+          accuracy: LocationAccuracy.high,
+          distanceFilter: 10,
+        ),
+      ).listen((Position position) {
+        FirebaseFirestore.instance.collection('jobs').doc(widget.jobId).update({
+          'tracking.$uid.latitude': position.latitude,
+          'tracking.$uid.longitude': position.longitude,
+          'tracking.$uid.lastUpdate': FieldValue.serverTimestamp(),
+        });
+      });
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Journey started! Sharing live location with contractor.'), backgroundColor: Colors.blue),
+      );
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Error: $e')));
+        setState(() => _isOnTheWay = false);
+      }
+    }
+  }
+
+  Future<void> _stopJourney() async {
+    final uid = FirebaseAuth.instance.currentUser?.uid;
+    if (uid == null) return;
+
+    setState(() => _isStopping = true);
+
+    try {
+      await _positionStreamSubscription?.cancel();
+      _positionStreamSubscription = null;
+
+      await FirebaseFirestore.instance.collection('jobs').doc(widget.jobId).update({
+        'tracking.$uid.isActive': false,
+        'tracking.$uid.lastUpdate': FieldValue.serverTimestamp(),
+      });
+
+      if (mounted) {
+        setState(() {
+          _isOnTheWay = false;
+          _isStopping = false;
+        });
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Journey ended.')));
+      }
+    } catch (e) {
+      debugPrint("Error stopping journey: $e");
+      if (mounted) setState(() => _isStopping = false);
     }
   }
 
@@ -312,7 +403,7 @@ class _JobDetailsWorkerScreenState extends State<JobDetailsWorkerScreen> {
                   borderRadius: BorderRadius.circular(12),
                   border: Border.all(color: Colors.green.withOpacity(0.3)),
                 ),
-                child: const Column(
+                child: Column(
                   children: [
                     Icon(Icons.check_circle, color: Colors.green, size: 32),
                     SizedBox(height: 12),
@@ -324,6 +415,51 @@ class _JobDetailsWorkerScreenState extends State<JobDetailsWorkerScreen> {
                       'The contractor will contact you soon.',
                       style: TextStyle(color: Colors.green, fontSize: 13),
                     ),
+                    SizedBox(height: 24),
+                    if (!_isOnTheWay)
+                      ElevatedButton.icon(
+                        onPressed: _startJourney,
+                        icon: Icon(Icons.directions_run),
+                        label: Text("Start Journey / On My Way"),
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: Colors.blue,
+                          foregroundColor: Colors.white,
+                          padding: EdgeInsets.symmetric(horizontal: 24, vertical: 12),
+                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(30)),
+                        ),
+                      )
+                    else
+                      Column(
+                        children: [
+                          Container(
+                            padding: EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                            decoration: BoxDecoration(
+                              color: Colors.blue.shade50,
+                              borderRadius: BorderRadius.circular(20),
+                            ),
+                            child: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                SizedBox(width: 10, height: 10, child: CircularProgressIndicator(strokeWidth: 2)),
+                                SizedBox(width: 12),
+                                Text("Live tracking is active...", style: TextStyle(color: Colors.blue, fontWeight: FontWeight.bold)),
+                              ],
+                            ),
+                          ),
+                          SizedBox(height: 12),
+                          OutlinedButton.icon(
+                            onPressed: _isStopping ? null : _stopJourney,
+                            icon: Icon(Icons.location_off, color: Colors.red),
+                            label: _isStopping 
+                              ? SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2))
+                              : Text("I Have Arrived / Stop Tracking", style: TextStyle(color: Colors.red)),
+                            style: OutlinedButton.styleFrom(
+                              side: BorderSide(color: Colors.red),
+                              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(30)),
+                            ),
+                          ),
+                        ],
+                      ),
                   ],
                 ),
               )

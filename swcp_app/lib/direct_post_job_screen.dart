@@ -36,6 +36,8 @@ class _DirectPostJobScreenState extends State<DirectPostJobScreen> {
   final Map<String, int> _selectedWorkers = {};
   final Set<String> _autoDetectedSkills = {};
   bool _isLoading = false;
+  double? _contractorLat;
+  double? _contractorLng;
 
   @override
   void initState() {
@@ -91,6 +93,8 @@ class _DirectPostJobScreenState extends State<DirectPostJobScreen> {
         setState(() {
           _contractorNameController.text = data?['name'] ?? "";
           _phoneNumberController.text = data?['phone'] ?? "";
+          _contractorLat = data?['latitude'];
+          _contractorLng = data?['longitude'];
         });
       }
     }
@@ -161,6 +165,7 @@ class _DirectPostJobScreenState extends State<DirectPostJobScreen> {
       final jobDocRef = await FirebaseFirestore.instance.collection('jobs').add({
         'contractorId': uid,
         'targetWorkerId': widget.workerData['uid'], // Direct job target
+        'workerId': widget.workerData['uid'], // Added for compatibility
         'jobName': _jobNameController.text.trim(),
         'contractorName': _contractorNameController.text.trim(),
         'phoneNumber': _phoneNumberController.text.trim(),
@@ -169,13 +174,16 @@ class _DirectPostJobScreenState extends State<DirectPostJobScreen> {
         'requiredWorkers': _selectedWorkers,
         'acceptedWorkers': _selectedWorkers.map((key, value) => MapEntry(key, [])),
         'status': 'open',
+        'latitude': _contractorLat,
+        'longitude': _contractorLng,
         'createdAt': FieldValue.serverTimestamp(),
       });
 
       // Send notification to targeted worker
       final String companyName = _contractorNameController.text.trim().isNotEmpty ? _contractorNameController.text.trim() : 'A Contractor';
       await FirebaseFirestore.instance.collection('notifications').add({
-        'workerId': widget.workerData['uid'],
+        'receiverId': widget.workerData['uid'],
+        'workerId': widget.workerData['uid'], // For backwards compatibility
         'senderId': uid,
         'senderName': companyName,
         'type': 'job_invitation',

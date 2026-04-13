@@ -14,6 +14,7 @@ import 'services/job_ranking_engine.dart';
 import 'package:geolocator/geolocator.dart';
 import 'chats_list_screen.dart';
 import 'profile_sections/ai_support_chat_screen.dart';
+import 'services/translation_helper.dart';
 
 class WorkerDashboard extends StatefulWidget {
   final int initialIndex;
@@ -159,6 +160,35 @@ class _WorkerDashboardState extends State<WorkerDashboard> {
       case 3: return 'Settings';
       default: return "Worker Dashboard";
     }
+  }
+
+  final Map<String, String> _selectedLanguages = {};
+
+  Widget _buildLangOption(String alertId, String label, String langCode) {
+    final bool isSelected = (_selectedLanguages[alertId] ?? 'en') == langCode;
+    return GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onTap: () {
+        setState(() {
+          _selectedLanguages[alertId] = langCode;
+        });
+      },
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+        decoration: BoxDecoration(
+          color: isSelected ? const Color(0xFFA5555A).withOpacity(0.1) : Colors.transparent,
+          borderRadius: BorderRadius.circular(4),
+        ),
+        child: Text(
+          label,
+          style: TextStyle(
+            fontSize: 10,
+            fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
+            color: isSelected ? const Color(0xFFA5555A) : Colors.grey,
+          ),
+        ),
+      ),
+    );
   }
 
   void _onItemTapped(int index) {
@@ -1077,7 +1107,7 @@ class _WorkerAlertsScreenState extends State<WorkerAlertsScreen> {
     try {
       final snapshots = await FirebaseFirestore.instance
           .collection('notifications')
-          .where('workerId', isEqualTo: uid)
+          .where('receiverId', isEqualTo: uid)
           .where('isRead', isEqualTo: false)
           .get();
 
@@ -1096,27 +1126,7 @@ class _WorkerAlertsScreenState extends State<WorkerAlertsScreen> {
   final Map<String, String> _selectedLanguages = {};
 
   String _getTranslation(String originalText, String lang) {
-    if (lang == 'en') return originalText;
-    
-    // Hindi Script Logic
-    if (lang == 'hi') {
-      final lowStr = originalText.toLowerCase();
-      if (lowStr.contains("hi") || lowStr.contains("hello")) return "नमस्ते! 👋";
-      if (lowStr.contains("3 pm") || lowStr.contains("3pm")) return "मैं ३ बजे पहुँच जाऊँगा।";
-      if (lowStr.contains("job") || lowStr.contains("post")) return "नया कार्य उपलब्ध!";
-      return "हिन्दी: " + originalText;
-    }
-    
-    // Marathi Script Logic
-    if (lang == 'mr') {
-      final lowStr = originalText.toLowerCase();
-      if (lowStr.contains("hi") || lowStr.contains("hello")) return "नमस्कार! 👋";
-      if (lowStr.contains("3 pm") || lowStr.contains("3pm")) return "मी ३ वाजता पोहोचू शकेन।";
-      if (lowStr.contains("job") || lowStr.contains("post")) return "नवीन काम उपलब्ध!";
-      return "मराठी: " + originalText;
-    }
-    
-    return originalText;
+    return TranslationHelper.translate(originalText, lang);
   }
 
   Widget _buildLangOption(String alertId, String label, String langCode) {
@@ -1163,7 +1173,7 @@ class _WorkerAlertsScreenState extends State<WorkerAlertsScreen> {
       body: StreamBuilder<QuerySnapshot>(
         stream: FirebaseFirestore.instance
             .collection('notifications')
-            .where('workerId', isEqualTo: uid)
+            .where('receiverId', isEqualTo: uid)
             .snapshots(),
         builder: (context, snapshot) {
           if (snapshot.hasError) return Center(child: Text('Error: ${snapshot.error}'));
@@ -1215,7 +1225,11 @@ class _WorkerAlertsScreenState extends State<WorkerAlertsScreen> {
                         leading: CircleAvatar(
                           backgroundColor: const Color(0xFF0F3A40).withOpacity(0.1),
                           child: Text(
-                            data['senderName']?[0].toUpperCase() ?? data['contractorName']?[0].toUpperCase() ?? 'C',
+                            (data['senderName'] != null && data['senderName'].toString().isNotEmpty) 
+                                ? data['senderName'].toString()[0].toUpperCase() 
+                                : (data['contractorName'] != null && data['contractorName'].toString().isNotEmpty)
+                                    ? data['contractorName'].toString()[0].toUpperCase()
+                                    : 'C',
                             style: const TextStyle(color: Color(0xFF0F3A40), fontWeight: FontWeight.bold),
                           ),
                         ),
@@ -1223,11 +1237,26 @@ class _WorkerAlertsScreenState extends State<WorkerAlertsScreen> {
                           mainAxisAlignment: MainAxisAlignment.spaceBetween,
                           children: [
                             Expanded(
-                              child: Text(
-                                data['senderName'] ?? data['contractorName'] ?? 'Contractor', 
-                                style: const TextStyle(fontWeight: FontWeight.bold),
-                                overflow: TextOverflow.ellipsis,
-                                maxLines: 1,
+                              child: Row(
+                                children: [
+                                  Expanded(
+                                    child: Text(
+                                      data['senderName'] ?? data['contractorName'] ?? 'Contractor', 
+                                      style: const TextStyle(fontWeight: FontWeight.bold),
+                                      overflow: TextOverflow.ellipsis,
+                                      maxLines: 1,
+                                    ),
+                                  ),
+                                  if (data['isRead'] == false)
+                                    Padding(
+                                      padding: const EdgeInsets.only(left: 8.0),
+                                      child: Container(
+                                        width: 8,
+                                        height: 8,
+                                        decoration: const BoxDecoration(color: Colors.blue, shape: BoxShape.circle),
+                                      ),
+                                    ),
+                                ],
                               ),
                             ),
                             const SizedBox(width: 8),
@@ -1240,7 +1269,7 @@ class _WorkerAlertsScreenState extends State<WorkerAlertsScreen> {
                             Padding(
                               padding: const EdgeInsets.only(top: 4.0),
                               child: Text(
-                                _getTranslation(data['message'] ?? '', _selectedLanguages[doc.id] ?? 'en'),
+                                TranslationHelper.translate(data['message'] ?? '', _selectedLanguages[doc.id] ?? 'en'),
                                 key: ValueKey('${doc.id}_${_selectedLanguages[doc.id] ?? 'en'}'),
                                 style: TextStyle(
                                   color: (_selectedLanguages[doc.id] ?? 'en') != 'en' ? Colors.blueAccent : Colors.black87,

@@ -49,7 +49,17 @@ class _ChatsListScreenState extends State<ChatsListScreen> {
           }
 
           // We use list so we can sort them manually and avoid Firestore composite index requirement
-          final List<QueryDocumentSnapshot> docs = snapshot.data?.docs.toList() ?? [];
+          final List<QueryDocumentSnapshot> allDocs = snapshot.data?.docs.toList() ?? [];
+          
+          // Filter out chats hidden for me ('Delete for me') or empty chats
+          final List<QueryDocumentSnapshot> docs = allDocs.where((doc) {
+            final data = doc.data() as Map<String, dynamic>;
+            final visibleTo = data['visibleTo'] as Map<String, dynamic>?;
+            final lastMessage = data['lastMessage'] as String? ?? '';
+            
+            // If the field is missing, assume it's visible. If it exists, check for false.
+            return visibleTo == null || visibleTo[currentUserUid] != false;
+          }).toList();
           
           docs.sort((a, b) {
             final aData = a.data() as Map<String, dynamic>;
