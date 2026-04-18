@@ -12,6 +12,7 @@ class AppState extends ChangeNotifier {
   // Session state (not persisted)
   bool _hasDismissedWelcome = false;
 
+  bool get isDarkMode => _themeMode == ThemeMode.dark;
   ThemeMode get themeMode => _themeMode;
   Locale get locale => _locale;
   String get lastGuestRoute => _lastGuestRoute;

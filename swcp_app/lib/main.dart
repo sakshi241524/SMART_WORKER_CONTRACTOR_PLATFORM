@@ -4,6 +4,7 @@ import 'firebase_options.dart';
 import 'auth_wrapper.dart';
 import 'package:provider/provider.dart';
 import 'app_state.dart';
+import 'services/notification_service.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -14,6 +15,10 @@ void main() async {
       options: DefaultFirebaseOptions.currentPlatform,
     );
     debugPrint("SWCP App: Firebase initialized successfully");
+    
+    // Initialize Notifications
+    await NotificationService.instance.init();
+    debugPrint("SWCP App: Notification Service initialized");
   } catch (e) {
     debugPrint("SWCP App: Firebase initialization error: $e");
   }
@@ -46,7 +51,15 @@ class MyApp extends StatelessWidget {
         colorScheme: ColorScheme.fromSeed(seedColor: const Color(0xFF0F3A40)),
         useMaterial3: true,
       ),
-      darkTheme: ThemeData.dark(useMaterial3: true),
+      darkTheme: ThemeData(
+        colorScheme: ColorScheme.fromSeed(
+          seedColor: const Color(0xFF0F3A40),
+          brightness: Brightness.dark,
+          surface: const Color(0xFF121212),
+        ),
+        scaffoldBackgroundColor: const Color(0xFF121212),
+        useMaterial3: true,
+      ),
       // Multi-language support removed - Locked to English
       locale: const Locale('en'),
       home: const AuthWrapper(),

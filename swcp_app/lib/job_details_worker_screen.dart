@@ -5,6 +5,8 @@ import 'package:intl/intl.dart';
 import 'package:geolocator/geolocator.dart';
 import 'dart:async';
 import 'chat_conversation_screen.dart';
+import 'widgets/leave_review_dialog.dart';
+import 'widgets/reviews_list_widget.dart';
 
 class JobDetailsWorkerScreen extends StatefulWidget {
   final Map<String, dynamic> jobData;

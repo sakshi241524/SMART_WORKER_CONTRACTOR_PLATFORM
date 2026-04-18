@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'qr_scanner_screen.dart';
 import 'chat_conversation_screen.dart';
 import 'worker_details_screen.dart';
 import 'worker_profile_screen.dart';
@@ -15,6 +16,8 @@ import 'package:geolocator/geolocator.dart';
 import 'chats_list_screen.dart';
 import 'profile_sections/ai_support_chat_screen.dart';
 import 'services/translation_helper.dart';
+import 'job_map_screen.dart';
+import 'services/notification_service.dart';
 
 class WorkerDashboard extends StatefulWidget {
   final int initialIndex;
@@ -36,11 +39,32 @@ class _WorkerDashboardState extends State<WorkerDashboard> {
   bool _isDeleteMode = false;
   final Set<String> _selectedJobIds = {};
 
+  late Stream<QuerySnapshot> _openJobsStream;
+  late Stream<QuerySnapshot> _allJobsStream;
+
   @override
   void initState() {
     super.initState();
     _selectedIndex = widget.initialIndex;
+    _openJobsStream = FirebaseFirestore.instance.collection('jobs').where('status', isEqualTo: 'open').snapshots();
+    _allJobsStream = FirebaseFirestore.instance.collection('jobs').snapshots();
     _loadInitialData();
+    _setupNotifications();
+  }
+
+  Future<void> _setupNotifications() async {
+    await NotificationService.instance.requestPermission();
+    await NotificationService.instance.updateTokenInFirestore();
+  }
+
+  Future<void> _handleRefresh() async {
+    await _updateCurrentLocation();
+    await _refreshHeartbeat();
+    setState(() {
+      _openJobsStream = FirebaseFirestore.instance.collection('jobs').where('status', isEqualTo: 'open').snapshots();
+      _allJobsStream = FirebaseFirestore.instance.collection('jobs').snapshots();
+    });
+    await _fetchUserAndStatus();
   }
 
   Future<void> _loadInitialData() async {
@@ -162,34 +186,6 @@ class _WorkerDashboardState extends State<WorkerDashboard> {
     }
   }
 
-  final Map<String, String> _selectedLanguages = {};
-
-  Widget _buildLangOption(String alertId, String label, String langCode) {
-    final bool isSelected = (_selectedLanguages[alertId] ?? 'en') == langCode;
-    return GestureDetector(
-      behavior: HitTestBehavior.opaque,
-      onTap: () {
-        setState(() {
-          _selectedLanguages[alertId] = langCode;
-        });
-      },
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-        decoration: BoxDecoration(
-          color: isSelected ? const Color(0xFFA5555A).withOpacity(0.1) : Colors.transparent,
-          borderRadius: BorderRadius.circular(4),
-        ),
-        child: Text(
-          label,
-          style: TextStyle(
-            fontSize: 10,
-            fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
-            color: isSelected ? const Color(0xFFA5555A) : Colors.grey,
-          ),
-        ),
-      ),
-    );
-  }
 
   void _onItemTapped(int index) {
     setState(() {
@@ -256,9 +252,13 @@ class _WorkerDashboardState extends State<WorkerDashboard> {
   }
 
   Widget _buildHomeView() {
-    return SingleChildScrollView(
-      padding: const EdgeInsets.all(24.0),
-      child: Column(
+    return RefreshIndicator(
+      onRefresh: _handleRefresh,
+      color: const Color(0xFFA5555A),
+      child: SingleChildScrollView(
+        physics: const AlwaysScrollableScrollPhysics(),
+        padding: const EdgeInsets.all(24.0),
+        child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           // Status Card
@@ -388,7 +388,7 @@ class _WorkerDashboardState extends State<WorkerDashboard> {
           const SizedBox(height: 16),
           if (_isWorkerActive)
             StreamBuilder<QuerySnapshot>(
-              stream: FirebaseFirestore.instance.collection('jobs').where('status', isEqualTo: 'open').snapshots(),
+              stream: _openJobsStream,
               builder: (context, snapshot) {
                 if (snapshot.hasError) return Text('Error: ${snapshot.error}');
                 if (snapshot.connectionState == ConnectionState.waiting) {
@@ -469,6 +469,7 @@ class _WorkerDashboardState extends State<WorkerDashboard> {
           else
             _buildEmptyJobsView(),
         ],
+      ),
       ),
     );
   }
@@ -687,7 +688,7 @@ class _WorkerDashboardState extends State<WorkerDashboard> {
 
   Widget _buildMyJobsView() {
     return StreamBuilder<QuerySnapshot>(
-      stream: FirebaseFirestore.instance.collection('jobs').snapshots(),
+      stream: _allJobsStream,
       builder: (context, snapshot) {
         if (snapshot.hasError) return Center(child: Text('Error: ${snapshot.error}'));
         if (snapshot.connectionState == ConnectionState.waiting) return const Center(child: CircularProgressIndicator());
@@ -756,20 +757,34 @@ class _WorkerDashboardState extends State<WorkerDashboard> {
         });
 
         if (jobScores.isEmpty) {
-          return Center(
-            child: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
+          return RefreshIndicator(
+            onRefresh: _handleRefresh,
+            color: const Color(0xFFA5555A),
+            child: ListView(
+              physics: const AlwaysScrollableScrollPhysics(),
               children: [
-                Icon(Icons.business_center_outlined, size: 64, color: Colors.grey.withOpacity(0.5)),
-                const SizedBox(height: 16),
-                const Text('No jobs here yet', style: TextStyle(color: Colors.grey, fontSize: 18)),
+                const SizedBox(height: 100),
+                Center(
+                  child: Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      Icon(Icons.business_center_outlined, size: 64, color: Colors.grey.withOpacity(0.5)),
+                      const SizedBox(height: 16),
+                      const Text('No jobs here yet', style: TextStyle(color: Colors.grey, fontSize: 18)),
+                    ],
+                  ),
+                ),
               ],
             ),
           );
         }
 
-        return ListView.builder(
-          padding: const EdgeInsets.all(16),
+        return RefreshIndicator(
+          onRefresh: _handleRefresh,
+          color: const Color(0xFFA5555A),
+          child: ListView.builder(
+            physics: const AlwaysScrollableScrollPhysics(),
+            padding: const EdgeInsets.all(16),
           itemCount: jobScores.length,
           itemBuilder: (context, index) {
             final job = jobScores[index];
@@ -779,6 +794,7 @@ class _WorkerDashboardState extends State<WorkerDashboard> {
 
             return _buildJobCard(data, id, score);
           },
+        ),
         );
       },
     );
@@ -807,10 +823,10 @@ class _WorkerDashboardState extends State<WorkerDashboard> {
         }
       },
       child: Scaffold(
-        backgroundColor: const Color(0xFFFBFBFC),
+        backgroundColor: Theme.of(context).scaffoldBackgroundColor,
         appBar: AppBar(
           leading: IconButton(
-            icon: const Icon(Icons.arrow_back, color: Color(0xFF0F3A40)),
+            icon: Icon(Icons.arrow_back, color: Theme.of(context).colorScheme.primary),
             onPressed: () {
               if (_selectedIndex != 0) {
                 setState(() => _selectedIndex = 0);
@@ -828,7 +844,7 @@ class _WorkerDashboardState extends State<WorkerDashboard> {
                 onTap: () => setState(() => _selectedIndex = 3), // Navigate to profile
                 child: CircleAvatar(
                   radius: 20,
-                  backgroundColor: const Color(0xFF0F3A40).withOpacity(0.1),
+                  backgroundColor: Theme.of(context).colorScheme.primary.withOpacity(0.1),
                   backgroundImage: (_profileImageUrl != null && _profileImageUrl!.startsWith('data:image'))
                       ? MemoryImage(base64Decode(_profileImageUrl!.split(',').last)) as ImageProvider
                       : (_profileImageUrl != null && _profileImageUrl!.isNotEmpty)
@@ -837,7 +853,7 @@ class _WorkerDashboardState extends State<WorkerDashboard> {
                   child: (_profileImageUrl == null || _profileImageUrl!.isEmpty)
                       ? Text(
                           (_userName.isNotEmpty) ? _userName[0].toUpperCase() : 'W',
-                          style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Color(0xFF0F3A40)),
+                          style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Theme.of(context).colorScheme.primary),
                         )
                       : null,
                 ),
@@ -852,7 +868,7 @@ class _WorkerDashboardState extends State<WorkerDashboard> {
                         overflow: TextOverflow.ellipsis,
                         maxLines: 1),
                     Text(_getAppBarTitle(context), 
-                        style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 18, color: Color(0xFF0F3A40)),
+                        style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18, color: Theme.of(context).colorScheme.primary),
                         overflow: TextOverflow.ellipsis,
                         maxLines: 1),
                   ],
@@ -860,13 +876,20 @@ class _WorkerDashboardState extends State<WorkerDashboard> {
               ),
             ],
           ),
-          backgroundColor: Colors.white,
+          backgroundColor: Theme.of(context).appBarTheme.backgroundColor,
           elevation: 0,
           actions: [
+            if (_selectedIndex == 1) // Jobs Tab
+              IconButton(
+                icon: const Icon(Icons.map_outlined),
+                onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (context) => const JobMapScreen())),
+                color: Theme.of(context).colorScheme.primary,
+                tooltip: 'Map View',
+              ),
             if (_isUpdating || _locationStatus == "Updating location...")
-              const Center(child: Padding(
-                padding: EdgeInsets.symmetric(horizontal: 16.0),
-                child: SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2, color: Color(0xFF0F3A40))),
+              Center(child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 16.0),
+                child: SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2, color: Theme.of(context).colorScheme.primary)),
               )),
             if (_locationStatus == "Location denied" || _locationStatus == "Location error")
               IconButton(
@@ -950,7 +973,24 @@ class _WorkerDashboardState extends State<WorkerDashboard> {
                   ),
           ],
         ),
-        body: widgetOptions.elementAt(_selectedIndex),
+        body: IndexedStack(
+          index: _selectedIndex,
+          children: widgetOptions,
+        ),
+        floatingActionButton: _selectedIndex == 1 
+            ? FloatingActionButton.extended(
+                heroTag: 'qr_scanner_fab',
+                onPressed: () {
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(builder: (context) => const QRScannerScreen()),
+                  );
+                },
+                backgroundColor: const Color(0xFF0F3A40),
+                icon: const Icon(Icons.qr_code_scanner, color: Colors.white),
+                label: const Text('Scan QR to Clock In/Out', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+              )
+            : null,
         bottomNavigationBar: BottomNavigationBar(
           items: <BottomNavigationBarItem>[
             BottomNavigationBarItem(
@@ -1094,6 +1134,10 @@ class WorkerAlertsScreen extends StatefulWidget {
 }
 
 class _WorkerAlertsScreenState extends State<WorkerAlertsScreen> {
+  bool _isDeleteMode = false;
+  final Set<String> _selectedAlertIds = {};
+  final Map<String, String> _selectedLanguages = {};
+
   @override
   void initState() {
     super.initState();
@@ -1123,7 +1167,6 @@ class _WorkerAlertsScreenState extends State<WorkerAlertsScreen> {
     }
   }
 
-  final Map<String, String> _selectedLanguages = {};
 
   String _getTranslation(String originalText, String lang) {
     return TranslationHelper.translate(originalText, lang);
@@ -1160,15 +1203,56 @@ class _WorkerAlertsScreenState extends State<WorkerAlertsScreen> {
   Widget build(BuildContext context) {
     final uid = FirebaseAuth.instance.currentUser?.uid;
     return Scaffold(
-      backgroundColor: const Color(0xFFFBFBFC),
+      backgroundColor: Theme.of(context).scaffoldBackgroundColor,
       appBar: AppBar(
-        title: const Text('Notifications', style: TextStyle(fontWeight: FontWeight.bold, color: Color(0xFF0F3A40))),
-        backgroundColor: Colors.white,
+        title: Text('Notifications', style: TextStyle(fontWeight: FontWeight.bold, color: Theme.of(context).colorScheme.primary)),
+        backgroundColor: Theme.of(context).appBarTheme.backgroundColor,
         elevation: 0,
-        leading: IconButton(
-          icon: const Icon(Icons.arrow_back, color: Color(0xFF0F3A40)),
-          onPressed: () => Navigator.pop(context),
-        ),
+        leading: _isDeleteMode 
+          ? IconButton(
+              icon: const Icon(Icons.close, color: Color(0xFF0F3A40)),
+              onPressed: () => setState(() {
+                _isDeleteMode = false;
+                _selectedAlertIds.clear();
+              }),
+            )
+          : IconButton(
+              icon: Icon(Icons.arrow_back, color: Theme.of(context).colorScheme.primary),
+              onPressed: () => Navigator.pop(context),
+            ),
+        actions: [
+          if (!_isDeleteMode)
+            StreamBuilder<QuerySnapshot>(
+              stream: FirebaseFirestore.instance
+                  .collection('notifications')
+                  .where('receiverId', isEqualTo: uid)
+                  .snapshots(),
+              builder: (context, snapshot) {
+                final bool hasData = snapshot.hasData && snapshot.data!.docs.any((d) => (d.data() as Map)['isDeleted'] != true);
+                return Row(
+                  children: [
+                    IconButton(
+                      icon: Icon(Icons.checklist, color: Theme.of(context).colorScheme.primary),
+                      tooltip: "Select Messages",
+                      onPressed: hasData ? () => setState(() => _isDeleteMode = true) : null,
+                    ),
+                    IconButton(
+                      icon: const Icon(Icons.delete_sweep, color: Colors.red),
+                      tooltip: "Clear All Alerts",
+                      onPressed: hasData ? () => _clearAllNotifications(context, uid!) : null,
+                    ),
+                  ],
+                );
+              }
+            ),
+          if (_isDeleteMode)
+            IconButton(
+              icon: const Icon(Icons.delete, color: Colors.red),
+              onPressed: _selectedAlertIds.isEmpty ? null : () => _deleteSelectedAlerts(context),
+              tooltip: "Delete Selected",
+            ),
+          const SizedBox(width: 8),
+        ],
       ),
       body: StreamBuilder<QuerySnapshot>(
         stream: FirebaseFirestore.instance
@@ -1191,7 +1275,25 @@ class _WorkerAlertsScreenState extends State<WorkerAlertsScreen> {
             );
           }
 
-          final docs = snapshot.data!.docs;
+          final allDocs = snapshot.data!.docs;
+          final docs = allDocs.where((doc) {
+            final data = doc.data() as Map<String, dynamic>;
+            return data['isDeleted'] != true;
+          }).toList();
+
+          if (docs.isEmpty) {
+            return Center(
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Icon(Icons.notifications_none, size: 64, color: Colors.grey.withOpacity(0.5)),
+                  const SizedBox(height: 16),
+                  const Text('No alerts yet', style: TextStyle(color: Colors.grey, fontSize: 18)),
+                ],
+              ),
+            );
+          }
+
           docs.sort((a, b) {
             final aTime = (a.data() as Map<String, dynamic>)['timestamp'] as Timestamp?;
             final bTime = (b.data() as Map<String, dynamic>)['timestamp'] as Timestamp?;
@@ -1208,21 +1310,45 @@ class _WorkerAlertsScreenState extends State<WorkerAlertsScreen> {
               final timestamp = (data['timestamp'] as Timestamp?)?.toDate() ?? DateTime.now();
               final timeStr = "${timestamp.hour}:${timestamp.minute.toString().padLeft(2, '0')}";
 
-              return Card(
-                margin: const EdgeInsets.only(bottom: 12),
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-                elevation: 0,
-                color: Colors.white,
-                child: Container(
-                  decoration: BoxDecoration(
+              return InkWell(
+                onTap: _isDeleteMode 
+                  ? () => setState(() {
+                      if (_selectedAlertIds.contains(doc.id)) {
+                        _selectedAlertIds.remove(doc.id);
+                      } else {
+                        _selectedAlertIds.add(doc.id);
+                      }
+                    })
+                  : null,
+                child: Card(
+                  margin: const EdgeInsets.only(bottom: 12),
+                  shape: RoundedRectangleBorder(
                     borderRadius: BorderRadius.circular(16),
-                    border: Border.all(color: Colors.grey.shade100),
+                    side: _isDeleteMode && _selectedAlertIds.contains(doc.id)
+                        ? const BorderSide(color: Colors.red, width: 2)
+                        : BorderSide(color: Theme.of(context).dividerColor.withOpacity(0.1)),
                   ),
+                  elevation: 0,
+                  color: _isDeleteMode && _selectedAlertIds.contains(doc.id)
+                      ? Colors.red.withOpacity(0.05)
+                      : Theme.of(context).cardColor,
                   child: Column(
                     children: [
                       ListTile(
                         contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                        leading: CircleAvatar(
+                        leading: _isDeleteMode
+                          ? Checkbox(
+                              value: _selectedAlertIds.contains(doc.id),
+                              onChanged: (val) => setState(() {
+                                if (val == true) {
+                                  _selectedAlertIds.add(doc.id);
+                                } else {
+                                  _selectedAlertIds.remove(doc.id);
+                                }
+                              }),
+                              activeColor: Colors.red,
+                            )
+                          : CircleAvatar(
                           backgroundColor: const Color(0xFF0F3A40).withOpacity(0.1),
                           child: Text(
                             (data['senderName'] != null && data['senderName'].toString().isNotEmpty) 
@@ -1272,7 +1398,9 @@ class _WorkerAlertsScreenState extends State<WorkerAlertsScreen> {
                                 TranslationHelper.translate(data['message'] ?? '', _selectedLanguages[doc.id] ?? 'en'),
                                 key: ValueKey('${doc.id}_${_selectedLanguages[doc.id] ?? 'en'}'),
                                 style: TextStyle(
-                                  color: (_selectedLanguages[doc.id] ?? 'en') != 'en' ? Colors.blueAccent : Colors.black87,
+                                  color: (_selectedLanguages[doc.id] ?? 'en') != 'en' 
+                                      ? Colors.blueAccent 
+                                      : Theme.of(context).textTheme.bodyLarge?.color,
                                   fontStyle: (_selectedLanguages[doc.id] ?? 'en') != 'en' ? FontStyle.italic : FontStyle.normal,
                                 ),
                               ),
@@ -1321,6 +1449,17 @@ class _WorkerAlertsScreenState extends State<WorkerAlertsScreen> {
                               icon: const Icon(Icons.reply, size: 18, color: Color(0xFF0F3A40)),
                               label: const Text('Respond', style: TextStyle(color: Color(0xFF0F3A40), fontWeight: FontWeight.bold)),
                             ),
+                            const Spacer(),
+                            IconButton(
+                              icon: const Icon(Icons.delete_outline, size: 20, color: Colors.grey),
+                              onPressed: () async {
+                                final confirm = await _showDeleteConfirm(context, "Are you sure you want to delete this notification?");
+                                if (confirm == true) {
+                                  await doc.reference.update({'isDeleted': true});
+                                }
+                              },
+                              tooltip: "Delete notification",
+                            ),
                           ],
                         ),
                       ),
@@ -1334,4 +1473,74 @@ class _WorkerAlertsScreenState extends State<WorkerAlertsScreen> {
       ),
     );
   }
+
+  Future<bool?> _showDeleteConfirm(BuildContext context, String message) {
+    return showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text("Confirm Delete"),
+        content: Text(message),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context, false), child: const Text("Cancel")),
+          TextButton(
+            onPressed: () => Navigator.pop(context, true), 
+            child: const Text("Delete", style: TextStyle(color: Colors.red, fontWeight: FontWeight.bold))
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _clearAllNotifications(BuildContext context, String uid) async {
+    final confirm = await _showDeleteConfirm(context, "This will permanently delete ALL notifications. This action cannot be undone.");
+    if (confirm != true) return;
+
+    try {
+      final snapshots = await FirebaseFirestore.instance
+          .collection('notifications')
+          .where('receiverId', isEqualTo: uid)
+          .get();
+
+      if (snapshots.docs.isNotEmpty) {
+        final batch = FirebaseFirestore.instance.batch();
+        for (var doc in snapshots.docs) {
+          batch.update(doc.reference, {'isDeleted': true});
+        }
+        await batch.commit();
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("All notifications cleared")));
+        }
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Error: $e"), backgroundColor: Colors.red));
+      }
+    }
+  }
+
+  Future<void> _deleteSelectedAlerts(BuildContext context) async {
+    final confirm = await _showDeleteConfirm(context, "Are you sure you want to delete ${_selectedAlertIds.length} selected notifications?");
+    if (confirm != true) return;
+
+    try {
+      final batch = FirebaseFirestore.instance.batch();
+      for (String id in _selectedAlertIds) {
+        batch.update(FirebaseFirestore.instance.collection('notifications').doc(id), {'isDeleted': true});
+      }
+      await batch.commit();
+      
+      if (mounted) {
+        setState(() {
+          _isDeleteMode = false;
+          _selectedAlertIds.clear();
+        });
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Selected notifications deleted")));
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Error: $e"), backgroundColor: Colors.red));
+      }
+    }
+  }
 }
+

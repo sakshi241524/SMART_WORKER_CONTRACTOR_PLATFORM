@@ -147,7 +147,28 @@ class _ContractorPersonalInfoScreenState extends State<ContractorPersonalInfoScr
       try {
         final user = FirebaseAuth.instance.currentUser;
         if (user != null) {
-          await FirebaseFirestore.instance.collection('users').doc(user.uid).set({
+          double? addressLat;
+          double? addressLng;
+
+          try {
+            String fullAddress = "";
+            if (_addressController.text.isNotEmpty) fullAddress += "${_addressController.text}, ";
+            if (_selectedDistrict != null) fullAddress += "$_selectedDistrict, ";
+            if (_selectedState != null) fullAddress += _selectedState!;
+            if (fullAddress.endsWith(", ")) fullAddress = fullAddress.substring(0, fullAddress.length - 2);
+
+            if (fullAddress.isNotEmpty) {
+              List<Location> locations = await locationFromAddress(fullAddress);
+              if (locations.isNotEmpty) {
+                addressLat = locations.first.latitude;
+                addressLng = locations.first.longitude;
+              }
+            }
+          } catch (e) {
+            debugPrint("Geocoding error: $e");
+          }
+
+          final dataToUpdate = <String, dynamic>{
             'phone': _phoneController.text.trim(),
             'address': _addressController.text.trim(),
             'education': _educationController.text.trim(),
@@ -158,7 +179,17 @@ class _ContractorPersonalInfoScreenState extends State<ContractorPersonalInfoScr
             'permanent_address': _permAddrController.text.trim(),
             'latitude': _currentPosition?.latitude,
             'longitude': _currentPosition?.longitude,
-          }, SetOptions(merge: true));
+          };
+
+          if (addressLat != null && addressLng != null) {
+            dataToUpdate['addressLat'] = addressLat;
+            dataToUpdate['addressLng'] = addressLng;
+          }
+
+          await FirebaseFirestore.instance.collection('users').doc(user.uid).set(
+            dataToUpdate, 
+            SetOptions(merge: true)
+          );
           
           if (mounted) {
             ScaffoldMessenger.of(context).showSnackBar(
@@ -260,9 +291,13 @@ class _ContractorPersonalInfoScreenState extends State<ContractorPersonalInfoScr
                   const SizedBox(height: 15),
                   _buildFullAddressSummary(),
                   const SizedBox(height: 15),
-                  _buildAddressField(), // Specific place and takula
+                  _buildAddressField(), // Specific place and taluka
                   const SizedBox(height: 15),
                   _buildCascadingAddressFields(), // State, District
+                  const SizedBox(height: 15),
+                  _buildTextField("Temporary Address", _tempAddrController, Icons.home_work),
+                  const SizedBox(height: 15),
+                  _buildTextField("Permanent Address", _permAddrController, Icons.home),
                   const SizedBox(height: 15),
                   _buildTextField("Education", _educationController, Icons.school),
                   const SizedBox(height: 15),
@@ -354,6 +389,9 @@ class _ContractorPersonalInfoScreenState extends State<ContractorPersonalInfoScr
     if (_addressController.text.isNotEmpty) fullAddress += "${_addressController.text}, ";
     if (_selectedDistrict != null) fullAddress += "$_selectedDistrict, ";
     if (_selectedState != null) fullAddress += _selectedState!;
+    if (fullAddress.endsWith(", ")) {
+      fullAddress = fullAddress.substring(0, fullAddress.length - 2);
+    }
     
     return Container(
       width: double.infinity,
@@ -435,9 +473,24 @@ class _ContractorPersonalInfoScreenState extends State<ContractorPersonalInfoScr
       controller: _addressController,
       maxLines: 1,
       decoration: InputDecoration(
-        labelText: "Specific place and takula",
+        labelText: "Specific place and taluka",
         hintText: "e.g. Office No 4, Baramati",
         prefixIcon: const Icon(Icons.location_on, color: Color(0xFF0F3A40)),
+        suffixIcon: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            IconButton(
+              icon: const Icon(Icons.my_location, color: Colors.blue),
+              onPressed: _getCurrentLocation,
+              tooltip: "Get Current Location",
+            ),
+            IconButton(
+              icon: const Icon(Icons.map, color: Colors.green),
+              onPressed: _openMap,
+              tooltip: "Open in Maps",
+            ),
+          ],
+        ),
         border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
         filled: true,
         fillColor: Colors.white,

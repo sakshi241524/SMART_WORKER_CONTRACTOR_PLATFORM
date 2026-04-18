@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:intl/intl.dart';
+import 'dart:async';
+import 'services/notification_sender_service.dart';
 
 class ChatConversationScreen extends StatefulWidget {
   final String chatId;
@@ -60,6 +62,13 @@ class _ChatConversationScreenState extends State<ChatConversationScreen> {
     _resetUnreadCount();
   }
 
+  @override
+  void dispose() {
+    _messageController.dispose();
+    _scrollController.dispose();
+    super.dispose();
+  }
+
   Future<void> _resetUnreadCount() async {
     if (currentUserUid == null) return;
     try {
@@ -70,6 +79,7 @@ class _ChatConversationScreenState extends State<ChatConversationScreen> {
       debugPrint("Error resetting unread count: $e");
     }
   }
+
   void _scrollToBottom() {
     if (_scrollController.hasClients) {
       _scrollController.animateTo(
@@ -119,6 +129,7 @@ class _ChatConversationScreenState extends State<ChatConversationScreen> {
       await docRef.collection('messages').add({
         'senderId': currentUserUid,
         'message': text,
+        'type': 'text',
         'timestamp': FieldValue.serverTimestamp(),
         'visibleTo': {
           currentUserUid: true,
@@ -134,6 +145,19 @@ class _ChatConversationScreenState extends State<ChatConversationScreen> {
         'visibleTo.$currentUserUid': true,
         'visibleTo.${widget.otherUserId}': true,
       });
+
+      // Send notification to the other user
+      NotificationSenderService.sendNotification(
+        recipientUid: widget.otherUserId,
+        title: "New Message from $currentUserName",
+        body: text,
+        data: {
+          'chatId': widget.chatId,
+          'senderId': currentUserUid,
+          'senderName': currentUserName,
+          'type': 'chat',
+        },
+      );
 
       _messageController.clear();
       _scrollToBottom();
@@ -200,8 +224,6 @@ class _ChatConversationScreenState extends State<ChatConversationScreen> {
 
   Future<void> _updateLastMessageAfterDeletion(String choice) async {
     try {
-      // Query for the last 10 messages to find the new preview
-      // We don't filter in Firestore here to maintain compatibility with legacy messages without 'visibleTo'
       final snapshot = await FirebaseFirestore.instance
           .collection('chats')
           .doc(widget.chatId)
@@ -210,7 +232,6 @@ class _ChatConversationScreenState extends State<ChatConversationScreen> {
           .limit(10)
           .get();
 
-      // Client-side filter for visibility
       final visibleMessages = snapshot.docs.where((doc) {
         final data = doc.data();
         final visibleTo = data['visibleTo'] as Map<String, dynamic>?;
@@ -224,18 +245,13 @@ class _ChatConversationScreenState extends State<ChatConversationScreen> {
           'lastMessageTime': lastMsg['timestamp'],
         });
       } else {
-        // No visible messages left for me
         if (choice == 'everyone') {
-          // If deleted for everyone and none left, remove the whole chat document
           await FirebaseFirestore.instance.collection('chats').doc(widget.chatId).delete();
         } else {
-          // Just hide the chat from my list
           await FirebaseFirestore.instance.collection('chats').doc(widget.chatId).update({
             'visibleTo.$currentUserUid': false,
           });
         }
-        
-        // Auto-navigate back since conversation is empty
         if (mounted) {
           Navigator.pop(context);
         }
@@ -249,13 +265,10 @@ class _ChatConversationScreenState extends State<ChatConversationScreen> {
     if (_selectedMessageIds.isEmpty || currentUserUid == null) return;
 
     final chatDocRef = FirebaseFirestore.instance.collection('chats').doc(widget.chatId);
-    
-    // Check if ALL selected messages are mine BEFORE showing dialog
     bool allMine = true;
     try {
       final messagesSnapshot = await chatDocRef.collection('messages').get();
       final selectedDocs = messagesSnapshot.docs.where((doc) => _selectedMessageIds.contains(doc.id));
-      
       for (var doc in selectedDocs) {
         if (doc.data()['senderId'] != currentUserUid) {
           allMine = false;
@@ -270,9 +283,7 @@ class _ChatConversationScreenState extends State<ChatConversationScreen> {
     if (choice == null) return;
 
     final batch = FirebaseFirestore.instance.batch();
-
     try {
-      // We need to check who sent each message for 'Delete for everyone'
       final messagesSnapshot = await chatDocRef.collection('messages').get();
       final selectedDocs = messagesSnapshot.docs.where((doc) => _selectedMessageIds.contains(doc.id));
 
@@ -280,15 +291,12 @@ class _ChatConversationScreenState extends State<ChatConversationScreen> {
         for (var doc in selectedDocs) {
           final data = doc.data();
           if (data['senderId'] == currentUserUid) {
-            // My message: delete for both
             batch.delete(doc.reference);
           } else {
-            // Their message: only hide for me
             batch.update(doc.reference, {'visibleTo.$currentUserUid': false});
           }
         }
       } else {
-        // Delete for me only (hide for all selected regardless of sender)
         for (var id in _selectedMessageIds) {
           batch.update(chatDocRef.collection('messages').doc(id), {
             'visibleTo.$currentUserUid': false,
@@ -298,19 +306,13 @@ class _ChatConversationScreenState extends State<ChatConversationScreen> {
 
       await batch.commit();
       await _updateLastMessageAfterDeletion(choice);
-      
       _exitSelectionMode();
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(choice == 'everyone' ? 'Deleted for everyone' : 'Deleted for me'))
-      );
     } catch (e) {
       debugPrint("Error deleting messages: $e");
     }
   }
 
   Future<void> _clearEntireChat() async {
-    // For clearing entire chat, we only show 'Delete for me' if there's any receiver message
-    // To be safe and adhere to user rule, we hide 'Everyone' for whole chat clears
     final choice = await _showDeleteOptionsDialog(showDeleteForEveryone: false);
     if (choice == null) return;
 
@@ -324,35 +326,14 @@ class _ChatConversationScreenState extends State<ChatConversationScreen> {
       final batch = FirebaseFirestore.instance.batch();
       final chatDocRef = FirebaseFirestore.instance.collection('chats').doc(widget.chatId);
 
-      if (choice == 'everyone') {
-        for (var doc in messages.docs) {
-          final data = doc.data() as Map<String, dynamic>;
-          if (data['senderId'] == currentUserUid) {
-            // Delete my messages for everyone
-            batch.delete(doc.reference);
-          } else {
-            // Hide their messages for me
-            batch.update(doc.reference, {'visibleTo.$currentUserUid': false});
-          }
-        }
-        // For 'everyone', we only delete the parent chat if BOTH agree or it's empty
-        // But for simplicity, we'll just hide it for the current user
-        batch.update(chatDocRef, {'visibleTo.$currentUserUid': false});
-      } else {
-        // Hide all for me
-        for (var doc in messages.docs) {
-          batch.update(doc.reference, {'visibleTo.$currentUserUid': false});
-        }
-        batch.update(chatDocRef, {'visibleTo.$currentUserUid': false});
+      for (var doc in messages.docs) {
+        batch.update(doc.reference, {'visibleTo.$currentUserUid': false});
       }
+      batch.update(chatDocRef, {'visibleTo.$currentUserUid': false});
 
       await batch.commit();
       _exitSelectionMode();
-      
-      Navigator.pop(context); // Go back to chat list
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(choice == 'everyone' ? 'Chat deleted for everyone' : 'Chat deleted for me'))
-      );
+      Navigator.pop(context);
     } catch (e) {
       debugPrint("Error clearing chat: $e");
     }
@@ -371,16 +352,6 @@ class _ChatConversationScreenState extends State<ChatConversationScreen> {
         setState(() {
           _selectedLanguages[messageId] = langCode;
         });
-        // Visual feedback
-        final langName = langCode == 'en' ? 'English' : langCode == 'hi' ? 'Hindi' : 'Marathi';
-        ScaffoldMessenger.of(context).hideCurrentSnackBar();
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Switched to $langName'),
-            duration: const Duration(seconds: 1),
-            behavior: SnackBarBehavior.floating,
-          ),
-        );
       },
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
@@ -407,17 +378,15 @@ class _ChatConversationScreenState extends State<ChatConversationScreen> {
     }
 
     return Scaffold(
-      backgroundColor: Colors.grey.shade50,
+      backgroundColor: Theme.of(context).scaffoldBackgroundColor,
       appBar: AppBar(
         leading: _isSelectionMode 
             ? IconButton(icon: const Icon(Icons.close), onPressed: _exitSelectionMode)
             : IconButton(icon: const Icon(Icons.arrow_back), onPressed: () => Navigator.pop(context)),
         title: _isSelectionMode 
             ? Text('${_selectedMessageIds.length} selected')
-            : Text(widget.otherUserName, style: const TextStyle(fontWeight: FontWeight.bold, color: Color(0xFF0F3A40))),
-        backgroundColor: Colors.white,
-        elevation: 1,
-        foregroundColor: const Color(0xFF0F3A40),
+            : Text(widget.otherUserName, style: const TextStyle(fontWeight: FontWeight.bold)),
+        foregroundColor: Theme.of(context).colorScheme.primary,
         actions: [
           if (_isSelectionMode) ...[
             IconButton(
@@ -450,27 +419,17 @@ class _ChatConversationScreenState extends State<ChatConversationScreen> {
                   .orderBy('timestamp', descending: true)
                   .snapshots(),
               builder: (context, snapshot) {
-                if (snapshot.hasError) {
-                  return const Center(child: Text('Error loading messages'));
-                }
+                if (snapshot.hasError) return const Center(child: Text('Error loading messages'));
+                if (snapshot.connectionState == ConnectionState.waiting) return const Center(child: CircularProgressIndicator());
 
-                if (snapshot.connectionState == ConnectionState.waiting) {
-                  return const Center(child: CircularProgressIndicator());
-                }
-
-                final allMessages = snapshot.data?.docs ?? [];
-                
-                // Filter visible messages client-side for compatibility
-                final messages = allMessages.where((doc) {
+                final messages = (snapshot.data?.docs ?? []).where((doc) {
                   final data = doc.data() as Map<String, dynamic>;
                   final visibleTo = data['visibleTo'] as Map<String, dynamic>?;
                   return visibleTo == null || visibleTo[currentUserUid] != false;
                 }).toList();
 
                 if (messages.isEmpty) {
-                  return const Center(
-                    child: Text('No messages yet. Say hi!', style: TextStyle(color: Colors.grey)),
-                  );
+                  return const Center(child: Text('No messages yet. Say hi!', style: TextStyle(color: Colors.grey)));
                 }
 
                 return ListView.builder(
@@ -485,12 +444,12 @@ class _ChatConversationScreenState extends State<ChatConversationScreen> {
                     final Timestamp? timestamp = data['timestamp'] as Timestamp?;
                     final bool isSelected = _selectedMessageIds.contains(doc.id);
 
+                    if (data['type'] == 'voice') return const SizedBox.shrink();
+
                     return GestureDetector(
                       onLongPress: () => _enterSelectionMode(doc.id),
                       onTap: () {
-                        if (_isSelectionMode) {
-                          _toggleSelection(doc.id);
-                        }
+                        if (_isSelectionMode) _toggleSelection(doc.id);
                       },
                       child: Align(
                         alignment: isMine ? Alignment.centerRight : Alignment.centerLeft,
@@ -499,79 +458,42 @@ class _ChatConversationScreenState extends State<ChatConversationScreen> {
                           padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
                           decoration: BoxDecoration(
                             color: isSelected 
-                                ? Colors.blue.withOpacity(0.2) // Selection tint
-                                : (isMine ? const Color(0xFF0F3A40) : Colors.white),
+                                ? Colors.blue.withOpacity(0.2) 
+                                : (isMine ? Theme.of(context).colorScheme.primary : Theme.of(context).cardColor),
                             borderRadius: BorderRadius.circular(20).copyWith(
                               bottomRight: isMine ? const Radius.circular(4) : const Radius.circular(20),
                               bottomLeft: !isMine ? const Radius.circular(4) : const Radius.circular(20),
                             ),
-                            border: isSelected ? Border.all(color: Colors.blue, width: 2) : null,
-                            boxShadow: [
-                              BoxShadow(
-                                color: Colors.black.withOpacity(0.05),
-                                blurRadius: 5,
-                                offset: const Offset(0, 2),
-                              ),
-                            ],
                           ),
-                          constraints: BoxConstraints(
-                            maxWidth: MediaQuery.of(context).size.width * 0.75,
-                          ),
-                          child: Stack(
+                          constraints: BoxConstraints(maxWidth: MediaQuery.of(context).size.width * 0.75),
+                          child: Column(
+                            crossAxisAlignment: isMine ? CrossAxisAlignment.end : CrossAxisAlignment.start,
                             children: [
-                              Column(
-                                crossAxisAlignment: isMine ? CrossAxisAlignment.end : CrossAxisAlignment.start,
-                                children: [
-                                  if (!isMine)
-                                    Container(
-                                      margin: const EdgeInsets.only(bottom: 8),
-                                      padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
-                                      decoration: BoxDecoration(
-                                        color: isSelected ? Colors.transparent : Colors.grey.shade100,
-                                        borderRadius: BorderRadius.circular(8),
-                                      ),
-                                      child: Row(
-                                        mainAxisSize: MainAxisSize.min,
-                                        children: [
-                                          const Padding(
-                                            padding: EdgeInsets.symmetric(horizontal: 4),
-                                            child: Icon(Icons.translate, size: 12, color: Colors.grey),
-                                          ),
-                                          _buildLangOption(doc.id, 'English', 'en'),
-                                          const Text(" | ", style: TextStyle(fontSize: 10, color: Colors.grey)),
-                                          _buildLangOption(doc.id, 'Hindi', 'hi'),
-                                          const Text(" | ", style: TextStyle(fontSize: 10, color: Colors.grey)),
-                                          _buildLangOption(doc.id, 'Marathi', 'mr'),
-                                        ],
-                                      ),
-                                    ),
-                                  Text(
-                                    _getTranslation(data['message'] ?? '', _selectedLanguages[doc.id] ?? 'en'),
-                                    key: ValueKey('${doc.id}_${_selectedLanguages[doc.id] ?? 'en'}'),
-                                    style: TextStyle(
-                                      color: isMine 
-                                          ? Colors.white 
-                                          : ((_selectedLanguages[doc.id] ?? 'en') != 'en' ? Colors.blue : Colors.black87),
-                                      fontSize: 16,
-                                      fontStyle: (_selectedLanguages[doc.id] ?? 'en') != 'en' ? FontStyle.italic : FontStyle.normal,
-                                    ),
-                                  ),
-                                  const SizedBox(height: 4),
-                                  Text(
-                                    _formatMessageTime(timestamp),
-                                    style: TextStyle(
-                                      color: isMine ? Colors.white70 : Colors.grey,
-                                      fontSize: 10,
-                                    ),
-                                  ),
-                                ],
-                              ),
-                              if (isSelected)
-                                const Positioned(
-                                  top: 0,
-                                  right: 0,
-                                  child: Icon(Icons.check_circle, size: 16, color: Colors.blue),
+                              if (!isMine)
+                                Row(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    const Icon(Icons.translate, size: 12, color: Colors.grey),
+                                    const SizedBox(width: 4),
+                                    _buildLangOption(doc.id, 'English', 'en'),
+                                    const Text(" | ", style: TextStyle(fontSize: 10, color: Colors.grey)),
+                                    _buildLangOption(doc.id, 'Hindi', 'hi'),
+                                    const Text(" | ", style: TextStyle(fontSize: 10, color: Colors.grey)),
+                                    _buildLangOption(doc.id, 'Marathi', 'mr'),
+                                  ],
                                 ),
+                              Text(
+                                _getTranslation(data['message'] ?? '', _selectedLanguages[doc.id] ?? 'en'),
+                                style: TextStyle(
+                                  color: isMine ? Colors.white : Theme.of(context).textTheme.bodyLarge?.color,
+                                  fontSize: 16,
+                                ),
+                              ),
+                              const SizedBox(height: 4),
+                              Text(
+                                _formatMessageTime(timestamp),
+                                style: TextStyle(color: isMine ? Colors.white70 : Colors.grey, fontSize: 10),
+                              ),
                             ],
                           ),
                         ),
@@ -582,32 +504,22 @@ class _ChatConversationScreenState extends State<ChatConversationScreen> {
               },
             ),
           ),
-          
-          // Input field area
           if (!_isSelectionMode)
             Container(
               padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-              decoration: const BoxDecoration(
-                color: Colors.white,
-                boxShadow: [
-                  BoxShadow(
-                    color: Colors.black12,
-                    blurRadius: 4,
-                    offset: Offset(0, -1),
-                  ),
-                ],
-              ),
+              decoration: BoxDecoration(color: Theme.of(context).cardColor),
               child: SafeArea(
                 child: Row(
                   children: [
                     Expanded(
                       child: Container(
                         decoration: BoxDecoration(
-                          color: Colors.grey.shade100,
+                          color: Theme.of(context).dividerColor.withOpacity(0.05),
                           borderRadius: BorderRadius.circular(24),
                         ),
                         child: TextField(
                           controller: _messageController,
+                          onChanged: (val) => setState(() {}),
                           textCapitalization: TextCapitalization.sentences,
                           decoration: const InputDecoration(
                             hintText: 'Type a message...',
@@ -621,15 +533,15 @@ class _ChatConversationScreenState extends State<ChatConversationScreen> {
                     ),
                     const SizedBox(width: 8),
                     Container(
-                      decoration: const BoxDecoration(
-                        color: Color(0xFF0F3A40),
+                      decoration: BoxDecoration(
+                        color: Theme.of(context).colorScheme.primary,
                         shape: BoxShape.circle,
                       ),
                       child: IconButton(
                         icon: _isSending 
                             ? const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2))
                             : const Icon(Icons.send, color: Colors.white),
-                        onPressed: _isSending ? null : _sendMessage,
+                        onPressed: _sendMessage,
                       ),
                     ),
                   ],

@@ -7,6 +7,7 @@ import 'package:image_picker/image_picker.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 import '../services/storage_service.dart';
 import '../data/india_data.dart';
+import 'package:geocoding/geocoding.dart';
 
 class PersonalInfoScreen extends StatefulWidget {
   const PersonalInfoScreen({super.key});
@@ -69,14 +70,45 @@ class _PersonalInfoScreenState extends State<PersonalInfoScreen> {
       try {
         final user = FirebaseAuth.instance.currentUser;
         if (user != null) {
-          await FirebaseFirestore.instance.collection('users').doc(user.uid).set({
+          double? addressLat;
+          double? addressLng;
+
+          try {
+            String fullAddress = "";
+            if (_addressController.text.isNotEmpty) fullAddress += "${_addressController.text}, ";
+            if (_selectedDistrict != null) fullAddress += "$_selectedDistrict, ";
+            if (_selectedState != null) fullAddress += _selectedState!;
+            if (fullAddress.endsWith(", ")) fullAddress = fullAddress.substring(0, fullAddress.length - 2);
+
+            if (fullAddress.isNotEmpty) {
+              List<Location> locations = await locationFromAddress(fullAddress);
+              if (locations.isNotEmpty) {
+                addressLat = locations.first.latitude;
+                addressLng = locations.first.longitude;
+              }
+            }
+          } catch (e) {
+            debugPrint("Geocoding error: $e");
+          }
+
+          final dataToUpdate = <String, dynamic>{
             'phone': _phoneController.text.trim(),
             'address': _addressController.text.trim(),
             'education': _educationController.text.trim(),
             'dob': _dobController.text.trim(),
             'state': _selectedState,
             'district': _selectedDistrict,
-          }, SetOptions(merge: true));
+          };
+
+          if (addressLat != null && addressLng != null) {
+            dataToUpdate['addressLat'] = addressLat;
+            dataToUpdate['addressLng'] = addressLng;
+          }
+
+          await FirebaseFirestore.instance.collection('users').doc(user.uid).set(
+            dataToUpdate, 
+            SetOptions(merge: true)
+          );
           
           if (mounted) {
             ScaffoldMessenger.of(context).showSnackBar(

@@ -4,6 +4,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:intl/intl.dart';
 import 'package:cached_network_image/cached_network_image.dart';
+import 'services/notification_sender_service.dart';
 
 class DirectPostJobScreen extends StatefulWidget {
   final Map<String, dynamic> workerData;
@@ -193,6 +194,17 @@ class _DirectPostJobScreenState extends State<DirectPostJobScreen> {
         'timestamp': FieldValue.serverTimestamp(),
         'isRead': false,
       });
+
+      // Send Push Notification
+      NotificationSenderService.sendNotification(
+        recipientUid: widget.workerData['uid'],
+        title: "Direct Job Offer from $companyName",
+        body: "Job: ${_jobNameController.text.trim()}. Tap to view details.",
+        data: {
+          'jobId': jobDocRef.id,
+          'type': 'job_invitation',
+        },
+      );
 
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(

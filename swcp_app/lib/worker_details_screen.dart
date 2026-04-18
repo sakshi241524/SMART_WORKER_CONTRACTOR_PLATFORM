@@ -6,6 +6,9 @@ import 'post_job_screen.dart';
 import 'direct_post_job_screen.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cached_network_image/cached_network_image.dart';
+import 'widgets/leave_review_dialog.dart';
+import 'widgets/reviews_list_widget.dart';
+import 'all_reviews_screen.dart';
 
 class WorkerDetailsScreen extends StatelessWidget {
   final Map<String, dynamic> workerData;
@@ -87,9 +90,20 @@ class WorkerDetailsScreen extends StatelessWidget {
                         : null,
                   ),
                   const SizedBox(height: 16),
-                  Text(
-                    workerData['name'] ?? 'Unknown Worker',
-                    style: const TextStyle(fontSize: 24, fontWeight: FontWeight.bold, color: Color(0xFF0F3A40)),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      Text(
+                        workerData['name'] ?? 'Unknown Worker',
+                        style: const TextStyle(fontSize: 24, fontWeight: FontWeight.bold, color: Color(0xFF0F3A40)),
+                      ),
+                      const SizedBox(width: 8),
+                      Icon(Icons.star, color: Colors.amber.shade600, size: 22),
+                      Text(
+                        ' ${(workerData['rating'] ?? 0.0).toStringAsFixed(1)}',
+                        style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Colors.amber.shade700),
+                      ),
+                    ],
                   ),
                   Text(
                     workerData['email'] ?? 'No email available',
@@ -211,6 +225,28 @@ class WorkerDetailsScreen extends StatelessWidget {
                     ),
                   ),
                   const SizedBox(height: 40),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      _buildSectionTitle('Ratings & Reviews'),
+                      TextButton(
+                        onPressed: () {
+                          Navigator.push(
+                            context,
+                            MaterialPageRoute(
+                              builder: (context) => AllReviewsScreen(
+                                userId: workerData['uid'] ?? '',
+                                userName: workerData['name'] ?? 'Worker',
+                              ),
+                            ),
+                          );
+                        },
+                        child: const Text('See all reviews', style: TextStyle(color: Colors.blue, fontWeight: FontWeight.bold)),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 12),
+                  ReviewsListWidget(userId: workerData['uid'] ?? '', limit: 1),
                 ],
               ),
             ),

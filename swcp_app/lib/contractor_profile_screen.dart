@@ -11,6 +11,9 @@ import 'profile_sections/skills_certificates_screen.dart';
 import 'profile_sections/contractor_experience_screen.dart';
 import 'profile_sections/account_settings_screen.dart';
 import 'profile_sections/help_support_screen.dart';
+import 'package:provider/provider.dart';
+import 'app_state.dart';
+import 'services/notification_service.dart';
 
 class ContractorProfileScreen extends StatefulWidget {
   const ContractorProfileScreen({super.key});
@@ -130,6 +133,7 @@ class _ContractorProfileScreenState extends State<ContractorProfileScreen> {
             title: "Account Settings",
             onTap: () => Navigator.push(context, MaterialPageRoute(builder: (context) => const AccountSettingsScreen())),
           ),
+
           _buildMenuItem(
             icon: Icons.help_outline,
             title: "Help & Support",
@@ -153,6 +157,8 @@ class _ContractorProfileScreenState extends State<ContractorProfileScreen> {
                   ),
                 );
                 if (confirm == true) {
+                  // Clear FCM token from Firestore before logging out
+                  await NotificationService.instance.deleteToken();
                   await FirebaseAuth.instance.signOut();
                   if (mounted) {
                     Navigator.of(context).pushNamedAndRemoveUntil('/', (route) => false);
@@ -205,5 +211,6 @@ class _ContractorProfileScreenState extends State<ContractorProfileScreen> {
       ),
     );
   }
+
 
 }

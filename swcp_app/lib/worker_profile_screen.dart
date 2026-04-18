@@ -11,6 +11,10 @@ import 'profile_sections/skills_certificates_screen.dart';
 import 'profile_sections/work_history_screen.dart';
 import 'profile_sections/account_settings_screen.dart';
 import 'profile_sections/help_support_screen.dart';
+import 'widgets/reviews_list_widget.dart';
+import 'package:provider/provider.dart';
+import 'app_state.dart';
+import 'services/notification_service.dart';
 
 class WorkerProfileScreen extends StatefulWidget {
   const WorkerProfileScreen({super.key});
@@ -24,8 +28,8 @@ class _WorkerProfileScreenState extends State<WorkerProfileScreen> {
   String _email = "...";
   String? _profileImageUrl;
   bool _isUploading = false;
-  double _rating = 4.9;
-  int _reviewsCount = 42;
+  double _rating = 0.0;
+  int _reviewsCount = 0;
   final StorageService _storageService = StorageService();
 
   @override
@@ -36,7 +40,7 @@ class _WorkerProfileScreenState extends State<WorkerProfileScreen> {
 
   Future<void> _fetchUserData() async {
     final user = FirebaseAuth.instance.currentUser;
-    if (user != null) {
+    if (user != null) {  
       _email = user.email ?? "...";
       final doc = await FirebaseFirestore.instance.collection('users').doc(user.uid).get();
       if (doc.exists) {
@@ -44,12 +48,14 @@ class _WorkerProfileScreenState extends State<WorkerProfileScreen> {
           setState(() {
             _name = doc.get('name') ?? "Worker Name";
             _profileImageUrl = doc.data()?.containsKey('profileImageUrl') == true ? doc.get('profileImageUrl') : null;
+            _rating = (doc.data()?['rating'] ?? 0.0).toDouble();
+            _reviewsCount = (doc.data()?['reviewCount'] ?? 0).toInt();
           });
         }
       }
     }
   }
-
+ 
   @override
   Widget build(BuildContext context) {
     return SingleChildScrollView(
@@ -135,6 +141,7 @@ class _WorkerProfileScreenState extends State<WorkerProfileScreen> {
             title: "Account Settings",
             onTap: () => Navigator.push(context, MaterialPageRoute(builder: (context) => const AccountSettingsScreen())),
           ),
+
           _buildMenuItem(
             icon: Icons.help_outline,
             title: "Help & Support",
@@ -146,6 +153,8 @@ class _WorkerProfileScreenState extends State<WorkerProfileScreen> {
             padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
             child: OutlinedButton(
               onPressed: () async {
+                // Clear FCM token from Firestore before logging out
+                await NotificationService.instance.deleteToken();
                 await FirebaseAuth.instance.signOut();
                 if (mounted) {
                   Navigator.of(context).pushNamedAndRemoveUntil('/', (route) => false);
@@ -169,6 +178,23 @@ class _WorkerProfileScreenState extends State<WorkerProfileScreen> {
             ),
           ),
           const SizedBox(height: 30),
+          
+          // Reviews Section
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 20),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text(
+                  "Work Reviews",
+                  style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: Color(0xFF0F3A40)),
+                ),
+                const SizedBox(height: 15),
+                ReviewsListWidget(userId: FirebaseAuth.instance.currentUser?.uid ?? ''),
+              ],
+            ),
+          ),
+          const SizedBox(height: 50),
         ],
       ),
     );
@@ -197,5 +223,6 @@ class _WorkerProfileScreenState extends State<WorkerProfileScreen> {
       ),
     );
   }
+
 
 }

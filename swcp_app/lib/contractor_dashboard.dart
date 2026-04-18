@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
+import 'package:qr_flutter/qr_flutter.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:intl/intl.dart';
@@ -20,6 +21,9 @@ import 'package:google_maps_flutter/google_maps_flutter.dart';
 import 'chat_conversation_screen.dart';
 import 'track_worker_screen.dart';
 import 'services/translation_helper.dart';
+import 'package:geocoding/geocoding.dart';
+import 'widgets/leave_review_dialog.dart';
+import 'services/notification_service.dart';
 
 class ContractorDashboard extends StatefulWidget {
   final int initialIndex;
@@ -34,11 +38,29 @@ class _ContractorDashboardState extends State<ContractorDashboard> {
   bool _isDeleteMode = false;
   final Set<String> _selectedJobIds = {};
 
+  late Stream<QuerySnapshot> _workersStream;
+  late Stream<QuerySnapshot> _myJobsStream;
+
   @override
   void initState() {
     super.initState();
     _selectedIndex = widget.initialIndex;
+    
+    _workersStream = FirebaseFirestore.instance.collection('users').where('role', isEqualTo: 'Worker').snapshots();
+    final uid = FirebaseAuth.instance.currentUser?.uid;
+    if (uid != null) {
+      _myJobsStream = FirebaseFirestore.instance.collection('jobs').where('contractorId', isEqualTo: uid).snapshots();
+    } else {
+      _myJobsStream = const Stream.empty();
+    }
+    
     _fetchUserName();
+    _setupNotifications();
+  }
+
+  Future<void> _setupNotifications() async {
+    await NotificationService.instance.requestPermission();
+    await NotificationService.instance.updateTokenInFirestore();
   }
   String _userName = "...";
   double? _contractorLat;
@@ -65,16 +87,54 @@ class _ContractorDashboardState extends State<ContractorDashboard> {
     'Cable Technician (internet/TV wiring)'
   ];
 
+  Future<void> _geocodeAndSaveUserAddress(String uid, Map<String, dynamic> data) async {
+    try {
+      final String address = data['address'] ?? '';
+      final String district = data['district'] ?? '';
+      final String state = data['state'] ?? '';
+      if (address.isEmpty && district.isEmpty && state.isEmpty) return;
+      
+      final String fullAddress = "$address, $district, $state, India";
+      final locations = await locationFromAddress(fullAddress);
+      
+      if (locations.isNotEmpty) {
+        await FirebaseFirestore.instance.collection('users').doc(uid).update({
+          'addressLat': locations.first.latitude,
+          'addressLng': locations.first.longitude,
+        });
+      }
+    } catch (e) {
+      debugPrint('Geocoding err for worker $uid: $e');
+    }
+  }
+
   Future<void> _fetchUserName() async {
     final uid = FirebaseAuth.instance.currentUser?.uid;
     if (uid != null) {
       final doc = await FirebaseFirestore.instance.collection('users').doc(uid).get();
       if (doc.exists && mounted) {
+        final data = doc.data() as Map<String, dynamic>;
         setState(() {
-          _userName = doc.get('name') ?? "Contractor";
-          _contractorLat = doc.data()?['latitude'];
-          _contractorLng = doc.data()?['longitude'];
+          _userName = data['name'] ?? "Contractor";
+          _contractorLat = data['latitude'] ?? data['addressLat'];
+          _contractorLng = data['longitude'] ?? data['addressLng'];
         });
+
+        if (data['latitude'] == null && data['addressLat'] == null && 
+            (data['address'] != null || data['district'] != null)) {
+          _geocodeAndSaveUserAddress(uid, data).then((_) async {
+            if (mounted) {
+              final upDoc = await FirebaseFirestore.instance.collection('users').doc(uid).get();
+              if (upDoc.exists && mounted && _contractorLat == null) {
+                final upData = upDoc.data() as Map<String, dynamic>;
+                setState(() {
+                  _contractorLat = upData['latitude'] ?? upData['addressLat'];
+                  _contractorLng = upData['longitude'] ?? upData['addressLng'];
+                });
+              }
+            }
+          });
+        }
 
         if (_contractorLat == null || _contractorLng == null) {
           _fetchCurrentLocation();
@@ -97,6 +157,13 @@ class _ContractorDashboardState extends State<ContractorDashboard> {
 
       if (permission == LocationPermission.always || permission == LocationPermission.whileInUse) {
         Position position = await Geolocator.getCurrentPosition(desiredAccuracy: LocationAccuracy.low);
+        final uid = FirebaseAuth.instance.currentUser?.uid;
+        if (uid != null) {
+          FirebaseFirestore.instance.collection('users').doc(uid).update({
+            'latitude': position.latitude,
+            'longitude': position.longitude,
+          }).catchError((e) => debugPrint("Error saving contractor location: $e"));
+        }
         if (mounted) {
           setState(() {
             _contractorLat = position.latitude;
@@ -111,6 +178,18 @@ class _ContractorDashboardState extends State<ContractorDashboard> {
       debugPrint("Error fetching dashboard location: $e");
       if (mounted) setState(() => _isFetchingLocation = false);
     }
+  }
+
+  Future<void> _handleRefresh() async {
+    await _fetchCurrentLocation();
+    setState(() {
+      _workersStream = FirebaseFirestore.instance.collection('users').where('role', isEqualTo: 'Worker').snapshots();
+      final uid = FirebaseAuth.instance.currentUser?.uid;
+      if (uid != null) {
+        _myJobsStream = FirebaseFirestore.instance.collection('jobs').where('contractorId', isEqualTo: uid).snapshots();
+      }
+    });
+    await _fetchUserName();
   }
 
   Future<void> _fetchPreferredSkills() async {
@@ -153,8 +232,12 @@ class _ContractorDashboardState extends State<ContractorDashboard> {
   }
 
   Widget _buildHomeView() {
-    return SingleChildScrollView(
-      padding: const EdgeInsets.all(20.0),
+    return RefreshIndicator(
+      onRefresh: _handleRefresh,
+      color: const Color(0xFF0F3A40),
+      child: SingleChildScrollView(
+        physics: const AlwaysScrollableScrollPhysics(),
+        padding: const EdgeInsets.all(20.0),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -165,7 +248,7 @@ class _ContractorDashboardState extends State<ContractorDashboard> {
               Expanded(
                 child: _buildStatCard(
                   'Total Workers',
-                  FirebaseFirestore.instance.collection('users').where('role', isEqualTo: 'Worker').snapshots(),
+                  _workersStream,
                   Icons.people_outline,
                   const Color(0xFF0F3A40),
                 ),
@@ -174,10 +257,7 @@ class _ContractorDashboardState extends State<ContractorDashboard> {
               Expanded(
                 child: _buildStatCard(
                   'Jobs Posted',
-                  FirebaseFirestore.instance
-                      .collection('jobs')
-                      .where('contractorId', isEqualTo: FirebaseAuth.instance.currentUser?.uid)
-                      .snapshots(),
+                  _myJobsStream,
                   Icons.assignment_outlined,
                   const Color(0xFFA5555A),
                 ),
@@ -219,6 +299,7 @@ class _ContractorDashboardState extends State<ContractorDashboard> {
           _buildNearbyWorkersSection(),
         ],
       ),
+      ),
     );
   }
 
@@ -258,7 +339,7 @@ class _ContractorDashboardState extends State<ContractorDashboard> {
         SizedBox(
           height: 220,
           child: StreamBuilder<QuerySnapshot>(
-            stream: FirebaseFirestore.instance.collection('users').where('role', isEqualTo: 'Worker').snapshots(),
+            stream: _workersStream,
             builder: (context, snapshot) {
               if (snapshot.hasError) return Text('Error: ${snapshot.error}');
               if (snapshot.connectionState == ConnectionState.waiting) return const Center(child: CircularProgressIndicator());
@@ -272,11 +353,21 @@ class _ContractorDashboardState extends State<ContractorDashboard> {
                 final data = doc.data() as Map<String, dynamic>;
                 data['uid'] = doc.id;
                 
+                final double rating = (data['rating'] != null) ? (data['rating'] as num).toDouble() : 0.0;
+                final double? wLat = data['latitude'] ?? data['addressLat'];
+                final double? wLng = data['longitude'] ?? data['addressLng'];
+
+                // Fire and forget geocoding if both are missing but they have address info
+                if (data['latitude'] == null && data['addressLat'] == null && 
+                    (data['address'] != null || data['district'] != null)) {
+                  _geocodeAndSaveUserAddress(doc.id, data);
+                }
+
                 final double score = RecommendationEngine.calculateMatchScore(
                   contractorLat: _contractorLat,
                   contractorLng: _contractorLng,
-                  workerLat: data['latitude'],
-                  workerLng: data['longitude'],
+                  workerLat: wLat,
+                  workerLng: wLng,
                   workerSkills: List<String>.from(data['skills'] ?? []),
                   preferredSkills: _preferredSkills,
                   workerStatus: data['status'] ?? 'active',
@@ -284,10 +375,10 @@ class _ContractorDashboardState extends State<ContractorDashboard> {
                 );
 
                 double distance = -1;
-                if (_contractorLat != null && _contractorLng != null && data['latitude'] != null && data['longitude'] != null) {
+                if (_contractorLat != null && _contractorLng != null && wLat != null && wLng != null) {
                   distance = Geolocator.distanceBetween(
                     _contractorLat!, _contractorLng!, 
-                    data['latitude']!, data['longitude']!
+                    wLat, wLng
                   ) / 1000;
                 }
 
@@ -543,16 +634,26 @@ class _ContractorDashboardState extends State<ContractorDashboard> {
 
         Expanded(
           child: StreamBuilder<QuerySnapshot>(
-            stream: FirebaseFirestore.instance.collection('users').where('role', isEqualTo: 'Worker').snapshots(),
+            stream: _workersStream,
             builder: (context, snapshot) {
               if (snapshot.hasError) {
-                return Center(child: Text('Error: ${snapshot.error}', style: const TextStyle(color: Colors.red)));
+                return const Center(child: Text('Error loading workers.', style: TextStyle(color: Colors.red)));
               }
               if (snapshot.connectionState == ConnectionState.waiting) {
                 return const Center(child: CircularProgressIndicator());
               }
               if (!snapshot.hasData || snapshot.data!.docs.isEmpty) {
-                return const Center(child: Text('No workers registered yet.', style: TextStyle(color: Colors.grey)));
+                return RefreshIndicator(
+                  onRefresh: _handleRefresh,
+                  color: const Color(0xFF0F3A40),
+                  child: ListView(
+                    physics: const AlwaysScrollableScrollPhysics(),
+                    children: const [
+                       SizedBox(height: 100),
+                       Center(child: Text('No workers registered yet.', style: TextStyle(color: Colors.grey))),
+                    ]
+                  ),
+                );
               }
 
               // Apply Filters Client-Side
@@ -590,11 +691,25 @@ class _ContractorDashboardState extends State<ContractorDashboard> {
               }).toList();
 
               if (workers.isEmpty) {
-                return const Center(child: Text('No workers match your filters.', style: TextStyle(color: Colors.grey)));
+                return RefreshIndicator(
+                  onRefresh: _handleRefresh,
+                  color: const Color(0xFF0F3A40),
+                  child: ListView(
+                    physics: const AlwaysScrollableScrollPhysics(),
+                    children: const [
+                       SizedBox(height: 100),
+                       Center(child: Text('No workers match your filters.', style: TextStyle(color: Colors.grey))),
+                    ]
+                  ),
+                );
               }
 
-              return ListView.builder(
-                padding: const EdgeInsets.all(16),
+              return RefreshIndicator(
+                onRefresh: _handleRefresh,
+                color: const Color(0xFF0F3A40),
+                child: ListView.builder(
+                  physics: const AlwaysScrollableScrollPhysics(),
+                  padding: const EdgeInsets.all(16),
                 itemCount: workers.length,
                 itemBuilder: (context, index) {
                   final doc = workers[index];
@@ -639,9 +754,19 @@ class _ContractorDashboardState extends State<ContractorDashboard> {
                                     Row(
                                       mainAxisAlignment: MainAxisAlignment.spaceBetween,
                                       children: [
-                                        Text(
-                                          data['name'] ?? 'Worker',
-                                          style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Color(0xFF0F3A40)),
+                                        Row(
+                                          children: [
+                                            Text(
+                                              data['name'] ?? 'Worker',
+                                              style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Color(0xFF0F3A40)),
+                                            ),
+                                            const SizedBox(width: 8),
+                                            Icon(Icons.star, color: Colors.amber.shade600, size: 18),
+                                            Text(
+                                              ' ${(data['rating'] ?? 0.0).toStringAsFixed(1)}',
+                                              style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Colors.amber.shade700),
+                                            ),
+                                          ],
                                         ),
                                         IconButton(
                                           icon: Icon(
@@ -745,6 +870,7 @@ class _ContractorDashboardState extends State<ContractorDashboard> {
                     ),
                   );
                 },
+              ),
               );
             },
           ),
@@ -783,9 +909,8 @@ class _ContractorDashboardState extends State<ContractorDashboard> {
   }
 
   Widget _buildJobsListView() {
-    final uid = FirebaseAuth.instance.currentUser?.uid;
     return StreamBuilder<QuerySnapshot>(
-      stream: FirebaseFirestore.instance.collection('jobs').where('contractorId', isEqualTo: uid).snapshots(),
+      stream: _myJobsStream,
       builder: (context, snapshot) {
         if (snapshot.hasError) {
           return Center(child: Text('Error: ${snapshot.error}', style: const TextStyle(color: Colors.red)));
@@ -794,131 +919,159 @@ class _ContractorDashboardState extends State<ContractorDashboard> {
           return const Center(child: CircularProgressIndicator());
         }
         if (!snapshot.hasData || snapshot.data!.docs.isEmpty) {
-          return const Center(
-            child: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                Icon(Icons.assignment_outlined, size: 64, color: Colors.grey),
-                SizedBox(height: 16),
-                Text('No jobs posted yet.', style: TextStyle(color: Colors.grey, fontSize: 18)),
+          return RefreshIndicator(
+            onRefresh: _handleRefresh,
+            color: const Color(0xFF0F3A40),
+            child: ListView(
+              physics: const AlwaysScrollableScrollPhysics(),
+              children: const [
+                SizedBox(height: 100),
+                Center(
+                  child: Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      Icon(Icons.assignment_outlined, size: 64, color: Colors.grey),
+                      SizedBox(height: 16),
+                      Text('No jobs posted yet.', style: TextStyle(color: Colors.grey, fontSize: 18)),
+                    ],
+                  ),
+                ),
               ],
             ),
           );
         }
 
-        return ListView.builder(
-      padding: const EdgeInsets.all(16),
-      itemCount: snapshot.data!.docs.length,
-      itemBuilder: (context, index) {
-        final doc = snapshot.data!.docs[index];
-        final data = doc.data() as Map<String, dynamic>;
-        final date = (data['date'] as Timestamp?)?.toDate() ?? DateTime.now();
-        final Map<String, dynamic> required = data['requiredWorkers'] ?? {};
-        final Map<String, dynamic> accepted = data['acceptedWorkers'] ?? {};
-        final String status = data['status'] ?? 'open';
+        return RefreshIndicator(
+          onRefresh: _handleRefresh,
+          color: const Color(0xFF0F3A40),
+          child: ListView.builder(
+            physics: const AlwaysScrollableScrollPhysics(),
+            padding: const EdgeInsets.all(16),
+            itemCount: snapshot.data!.docs.length,
+            itemBuilder: (context, index) {
+              final doc = snapshot.data!.docs[index];
+              final data = doc.data() as Map<String, dynamic>;
+              final date = (data['date'] as Timestamp?)?.toDate() ?? DateTime.now();
+              final Map<String, dynamic> required = data['requiredWorkers'] ?? {};
+              final Map<String, dynamic> accepted = data['acceptedWorkers'] ?? {};
+              final String status = data['status'] ?? 'open';
 
-        int totalRequired = 0;
-        required.values.forEach((v) => totalRequired += (v as int));
-        int totalAccepted = 0;
-        accepted.values.forEach((v) => totalAccepted += (v as List).length);
+              int totalRequired = 0;
+              required.values.forEach((v) => totalRequired += (v as int));
+              int totalAccepted = 0;
+              accepted.values.forEach((v) => totalAccepted += (v as List).length);
 
-        final bool isSelected = _selectedJobIds.contains(doc.id);
+              final bool isSelected = _selectedJobIds.contains(doc.id);
 
-        return Card(
-          margin: const EdgeInsets.only(bottom: 16),
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(16),
-            side: isSelected ? const BorderSide(color: Color(0xFFA5555A), width: 2) : BorderSide.none,
-          ),
-          child: Column(
-            children: [
-              if (_isDeleteMode)
-                CheckboxListTile(
-                  value: isSelected,
-                  onChanged: (val) {
-                    setState(() {
-                      if (val == true) {
-                        _selectedJobIds.add(doc.id);
-                      } else {
-                        _selectedJobIds.remove(doc.id);
-                      }
-                    });
-                  },
-                  title: Text(data['jobName'] ?? 'Untitled Job', style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 18, color: Color(0xFF0F3A40))),
-                  subtitle: Text('Status: ${status.toUpperCase()} • $totalAccepted/$totalRequired joined'),
-                  activeColor: const Color(0xFFA5555A),
-                  secondary: CircleAvatar(
-                    backgroundColor: status == 'open' ? const Color(0xFFA5555A).withOpacity(0.1) : Colors.grey.withOpacity(0.1),
-                    child: Icon(Icons.business_center, color: status == 'open' ? const Color(0xFFA5555A) : Colors.grey),
-                  ),
-                )
-              else
-                ExpansionTile(
-                  title: Text(data['jobName'] ?? 'Untitled Job', style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 18, color: Color(0xFF0F3A40))),
-                  subtitle: Text('Status: ${status.toUpperCase()} • $totalAccepted/$totalRequired joined'),
-                  leading: CircleAvatar(
-                    backgroundColor: status == 'open' ? const Color(0xFFA5555A).withOpacity(0.1) : Colors.grey.withOpacity(0.1),
-                    child: Icon(Icons.business_center, color: status == 'open' ? const Color(0xFFA5555A) : Colors.grey),
-                  ),
+              return Card(
+                margin: const EdgeInsets.only(bottom: 16),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(16),
+                  side: isSelected ? const BorderSide(color: Color(0xFFA5555A), width: 2) : BorderSide.none,
+                ),
+                child: Column(
                   children: [
-                    Padding(
-                      padding: const EdgeInsets.all(16.0),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
+                    if (_isDeleteMode)
+                      CheckboxListTile(
+                        value: isSelected,
+                        onChanged: (val) {
+                          setState(() {
+                            if (val == true) {
+                              _selectedJobIds.add(doc.id);
+                            } else {
+                              _selectedJobIds.remove(doc.id);
+                            }
+                          });
+                        },
+                        title: Text(data['jobName'] ?? 'Untitled Job', style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 18, color: Color(0xFF0F3A40))),
+                        subtitle: Text('Status: ${status.toUpperCase()} • $totalAccepted/$totalRequired joined'),
+                        activeColor: const Color(0xFFA5555A),
+                        secondary: CircleAvatar(
+                          backgroundColor: status == 'open' ? const Color(0xFFA5555A).withOpacity(0.1) : Colors.grey.withOpacity(0.1),
+                          child: Icon(Icons.business_center, color: status == 'open' ? const Color(0xFFA5555A) : Colors.grey),
+                        ),
+                      )
+                    else
+                      ExpansionTile(
+                        title: Text(data['jobName'] ?? 'Untitled Job', style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 18, color: Color(0xFF0F3A40))),
+                        subtitle: Text('Status: ${status.toUpperCase()} • $totalAccepted/$totalRequired joined'),
+                        leading: CircleAvatar(
+                          backgroundColor: status == 'open' ? const Color(0xFFA5555A).withOpacity(0.1) : Colors.grey.withOpacity(0.1),
+                          child: Icon(Icons.business_center, color: status == 'open' ? const Color(0xFFA5555A) : Colors.grey),
+                        ),
                         children: [
-                          _buildJobDetailRow('Date', DateFormat('EEE MMM dd yyyy').format(date)),
-                          _buildJobDetailRow('Location', data['address'] ?? 'Not specified'),
-                          const Divider(height: 24),
-                          const Text('Accepted Workers by Profession:', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
-                          const SizedBox(height: 12),
-                          ...required.entries.map((entry) {
-                            final role = entry.key;
-                            final reqCount = entry.value;
-                            final List<dynamic> joinedUids = accepted[role] ?? [];
-                            
-                            return Padding(
-                              padding: const EdgeInsets.only(bottom: 12.0),
-                              child: Column(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  Text('$role (${joinedUids.length}/$reqCount)', style: const TextStyle(fontWeight: FontWeight.w600)),
-                                  if (joinedUids.isEmpty)
-                                    const Text('  No workers yet', style: TextStyle(color: Colors.grey, fontSize: 13, fontStyle: FontStyle.italic))
-                                  else
-                                    ...joinedUids.map((uid) => _buildWorkerNameItem(uid, doc.id, data)),
+                          Padding(
+                            padding: const EdgeInsets.all(16.0),
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                _buildJobDetailRow('Date', DateFormat('EEE MMM dd yyyy').format(date)),
+                                _buildJobDetailRow('Location', data['address'] ?? 'Not specified'),
+                                const Divider(height: 24),
+                                const Text('Accepted Workers by Profession:', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
+                                const SizedBox(height: 12),
+                                ...required.entries.map((entry) {
+                                  final role = entry.key;
+                                  final reqCount = entry.value;
+                                  final List<dynamic> joinedUids = accepted[role] ?? [];
+
+                                  return Padding(
+                                    padding: const EdgeInsets.only(bottom: 12.0),
+                                    child: Column(
+                                      crossAxisAlignment: CrossAxisAlignment.start,
+                                      children: [
+                                        Text('$role (${joinedUids.length}/$reqCount)', style: const TextStyle(fontWeight: FontWeight.w600)),
+                                        if (joinedUids.isEmpty)
+                                          const Text('  No workers yet', style: TextStyle(color: Colors.grey, fontSize: 13, fontStyle: FontStyle.italic))
+                                        else
+                                          ...joinedUids.map((uid) => _buildWorkerNameItem(uid, doc.id, data)),
+                                      ],
+                                    ),
+                                  );
+                                }).toList(),
+                                if (status == 'open') ...[
+                                  const SizedBox(height: 16),
+                                  SizedBox(
+                                    width: double.infinity,
+                                    child: ElevatedButton.icon(
+                                      onPressed: () => _showQrDialog(doc.id, data['jobName'] ?? 'Job'),
+                                      icon: const Icon(Icons.qr_code_2),
+                                      label: const Text('Show Attendance QR'),
+                                      style: ElevatedButton.styleFrom(
+                                        backgroundColor: const Color(0xFF0F3A40),
+                                        foregroundColor: Colors.white,
+                                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                                      ),
+                                    ),
+                                  ),
+                                  const SizedBox(height: 12),
+                                  SizedBox(
+                                    width: double.infinity,
+                                    child: ElevatedButton(
+                                      onPressed: () => _manualCloseJob(doc.id),
+                                      style: ElevatedButton.styleFrom(
+                                        backgroundColor: Colors.grey.shade800,
+                                        foregroundColor: Colors.white,
+                                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                                      ),
+                                      child: const Text('Close Job Manually'),
+                                    ),
+                                  ),
                                 ],
-                              ),
-                            );
-                          }).toList(),
-                          
-                          if (status == 'open') ...[
-                            const SizedBox(height: 16),
-                            SizedBox(
-                              width: double.infinity,
-                              child: ElevatedButton(
-                                onPressed: () => _manualCloseJob(doc.id),
-                                style: ElevatedButton.styleFrom(
-                                  backgroundColor: Colors.grey.shade800,
-                                  foregroundColor: Colors.white,
-                                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-                                ),
-                                child: const Text('Close Job Manually'),
-                              ),
+                              ],
                             ),
-                          ],
+                          ),
                         ],
                       ),
-                    ),
                   ],
                 ),
-            ],
+              );
+            },
           ),
         );
       },
     );
-  },
-);
-}
+  }
 
   Future<void> _deleteSelectedJobs() async {
     if (_selectedJobIds.isEmpty) return;
@@ -968,103 +1121,233 @@ class _ContractorDashboardState extends State<ContractorDashboard> {
   }
 
   Widget _buildWorkerNameItem(String uid, String jobId, Map<String, dynamic> jobData) {
-    return FutureBuilder<DocumentSnapshot>(
-      future: FirebaseFirestore.instance.collection('users').doc(uid).get(),
-      builder: (context, snapshot) {
-        if (!snapshot.hasData) return const Text('  ...', style: TextStyle(color: Colors.grey));
-        
-        final workerData = snapshot.data!.data() as Map<String, dynamic>?;
-        if (workerData == null) return const SizedBox();
-        
-        final name = workerData['name'] ?? 'Unknown';
-        
-        return Padding(
-          padding: const EdgeInsets.only(left: 8.0, top: 4.0),
-          child: Column(
-            children: [
-              Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  Expanded(
+    bool isExpanded = false;
+    return StatefulBuilder(
+      builder: (context, setState) {
+        return FutureBuilder<DocumentSnapshot>(
+          future: FirebaseFirestore.instance.collection('users').doc(uid).get(),
+          builder: (context, snapshot) {
+            if (!snapshot.hasData) return const SizedBox(height: 20, child: LinearProgressIndicator());
+            
+            final workerData = snapshot.data!.data() as Map<String, dynamic>?;
+            if (workerData == null) return const SizedBox();
+            final name = workerData['name'] ?? 'Unknown';
+
+            return Column(
+              children: [
+                InkWell(
+                  onTap: () => setState(() => isExpanded = !isExpanded),
+                  borderRadius: BorderRadius.circular(8),
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 8.0, horizontal: 4.0),
                     child: Row(
                       children: [
-                        const Icon(Icons.check_circle, size: 14, color: Colors.green),
-                        const SizedBox(width: 8),
+                        Icon(Icons.person_outline, size: 18, color: isExpanded ? const Color(0xFFA5555A) : Colors.grey),
+                        const SizedBox(width: 12),
                         Expanded(
-                          child: Text(
-                            name, 
-                            style: const TextStyle(fontSize: 14, fontWeight: FontWeight.bold),
-                            overflow: TextOverflow.ellipsis,
+                          child: Row(
+                            children: [
+                              Text(
+                                name,
+                                style: TextStyle(
+                                  fontSize: 15,
+                                  fontWeight: isExpanded ? FontWeight.bold : FontWeight.w500,
+                                  color: isExpanded ? const Color(0xFF0F3A40) : Colors.black87,
+                                ),
+                              ),
+                              const SizedBox(width: 8),
+                              Icon(Icons.star, color: Colors.amber.shade600, size: 14),
+                              Text(
+                                ' ${(workerData['rating'] ?? 0.0).toStringAsFixed(1)}',
+                                style: TextStyle(fontSize: 13, fontWeight: FontWeight.bold, color: Colors.amber.shade700),
+                              ),
+                            ],
                           ),
+                        ),
+                        Icon(
+                          isExpanded ? Icons.keyboard_arrow_up : Icons.keyboard_arrow_down,
+                          size: 20,
+                          color: Colors.grey,
                         ),
                       ],
                     ),
                   ),
-                  Row(
-                    children: [
-                      // Tracking Button - Only shows if tracking is active for this worker on this job
-                      StreamBuilder<DocumentSnapshot>(
-                        stream: FirebaseFirestore.instance.collection('jobs').doc(jobId).snapshots(),
-                        builder: (context, jobSnapshot) {
-                          if (!jobSnapshot.hasData) return Container();
-                          
-                          final jData = jobSnapshot.data!.data() as Map<String, dynamic>?;
-                          final tracking = jData?['tracking']?[uid] as Map<String, dynamic>?;
-                          
-                          if (tracking != null && tracking['isActive'] == true) {
-                            return Padding(
-                              padding: const EdgeInsets.only(right: 8.0),
-                              child: TextButton.icon(
+                ),
+                if (isExpanded)
+                  Container(
+                    margin: const EdgeInsets.only(left: 30, bottom: 12, right: 8),
+                    padding: const EdgeInsets.all(12),
+                    decoration: BoxDecoration(
+                      color: Colors.grey.shade50,
+                      borderRadius: BorderRadius.circular(12),
+                      border: Border.all(color: Colors.grey.shade200),
+                    ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        // Attendance Section
+                        StreamBuilder<DocumentSnapshot>(
+                          stream: FirebaseFirestore.instance.collection('jobs').doc(jobId).collection('attendance').doc(uid).snapshots(),
+                          builder: (context, attendanceSnap) {
+                            if (!attendanceSnap.hasData || !attendanceSnap.data!.exists) {
+                              return _buildDetailInfoRow(Icons.qr_code, "Attendance", "Not Arrived yet", Colors.grey);
+                            }
+                            
+                            final attData = attendanceSnap.data!.data() as Map<String, dynamic>?;
+                            final clockIn = attData?['clockIn'] as Timestamp?;
+                            final clockOut = attData?['clockOut'] as Timestamp?;
+                            
+                            String statusText = "Clocked In: ${clockIn != null ? DateFormat('hh:mm a').format(clockIn.toDate()) : 'Pending'}";
+                            if (clockOut != null) {
+                              statusText += "\nClocked Out: ${DateFormat('hh:mm a').format(clockOut.toDate())}";
+                            }
+                            
+                            return _buildDetailInfoRow(
+                              clockOut != null ? Icons.fact_check : Icons.timer,
+                              "Work Status",
+                              statusText,
+                              clockOut != null ? Colors.blueGrey : Colors.green,
+                            );
+                          },
+                        ),
+                        const Divider(height: 20),
+                        
+                        // Action Buttons Row
+                        Row(
+                          children: [
+                            // Tracking Button
+                            StreamBuilder<DocumentSnapshot>(
+                              stream: FirebaseFirestore.instance.collection('jobs').doc(jobId).snapshots(),
+                              builder: (context, jobSnapshot) {
+                                final jData = jobSnapshot.data?.data() as Map<String, dynamic>?;
+                                final tracking = jData?['tracking']?[uid] as Map<String, dynamic>?;
+                                
+                                if (tracking != null && tracking['isActive'] == true) {
+                                  return Expanded(
+                                    child: Padding(
+                                      padding: const EdgeInsets.only(right: 8.0),
+                                      child: ElevatedButton.icon(
+                                        onPressed: () {
+                                          Navigator.push(
+                                            context,
+                                            MaterialPageRoute(
+                                              builder: (context) => TrackWorkerScreen(
+                                                workerUid: uid,
+                                                workerName: name,
+                                                jobId: jobId,
+                                                jobLocation: LatLng(jobData['latitude'] ?? 0, jobData['longitude'] ?? 0),
+                                                jobAddress: jobData['address'] ?? 'Job Site',
+                                              ),
+                                            ),
+                                          );
+                                        },
+                                        icon: const Icon(Icons.location_on, size: 16),
+                                        label: const Text("Track", style: TextStyle(fontSize: 12)),
+                                        style: ElevatedButton.styleFrom(
+                                          backgroundColor: Colors.blue,
+                                          foregroundColor: Colors.white,
+                                          elevation: 0,
+                                          padding: const EdgeInsets.symmetric(vertical: 8),
+                                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                                        ),
+                                      ),
+                                    ),
+                                  );
+                                }
+                                return const SizedBox();
+                              },
+                            ),
+
+                            // Rate Worker Button - Highlighted if clocked out
+                            StreamBuilder<DocumentSnapshot>(
+                              stream: FirebaseFirestore.instance.collection('jobs').doc(jobId).collection('attendance').doc(uid).snapshots(),
+                              builder: (context, attendanceSnap) {
+                                final attData = attendanceSnap.data?.data() as Map<String, dynamic>?;
+                                final hasClockedOut = attData != null && attData['clockOut'] != null;
+
+                                return Expanded(
+                                  child: Padding(
+                                    padding: const EdgeInsets.only(right: 8.0),
+                                    child: ElevatedButton.icon(
+                                      onPressed: () {
+                                        showDialog(
+                                          context: context,
+                                          builder: (context) => LeaveReviewDialog(
+                                            targetUserId: uid,
+                                            targetUserName: name,
+                                          ),
+                                        );
+                                      },
+                                      icon: Icon(hasClockedOut ? Icons.star : Icons.star_outline, size: 16),
+                                      label: const Text("Rate", style: TextStyle(fontSize: 12)),
+                                      style: ElevatedButton.styleFrom(
+                                        backgroundColor: hasClockedOut ? Colors.amber : Colors.white,
+                                        foregroundColor: hasClockedOut ? Colors.white : Colors.amber.shade700,
+                                        side: BorderSide(color: Colors.amber.shade300),
+                                        elevation: 0,
+                                        padding: const EdgeInsets.symmetric(vertical: 8),
+                                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                                      ),
+                                    ),
+                                  ),
+                                );
+                              },
+                            ),
+                            
+                            // Message Button
+                            Expanded(
+                              child: OutlinedButton.icon(
                                 onPressed: () {
                                   Navigator.push(
                                     context,
                                     MaterialPageRoute(
-                                      builder: (context) => TrackWorkerScreen(
-                                        workerUid: uid,
-                                        workerName: name,
-                                        jobId: jobId,
-                                        jobLocation: LatLng(jobData['latitude'] ?? 0, jobData['longitude'] ?? 0),
-                                        jobAddress: jobData['address'] ?? 'Job Site',
+                                      builder: (context) => ChatConversationScreen(
+                                        chatId: _getChatId(FirebaseAuth.instance.currentUser!.uid, uid),
+                                        otherUserId: uid,
+                                        otherUserName: name,
                                       ),
                                     ),
                                   );
                                 },
-                                icon: const Icon(Icons.location_on, size: 14, color: Colors.blue),
-                                label: const Text("Track Live", style: TextStyle(fontSize: 12, color: Colors.blue, fontWeight: FontWeight.bold)),
-                                style: TextButton.styleFrom(
-                                  backgroundColor: Colors.blue.withOpacity(0.1),
-                                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 0),
-                                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+                                icon: const Icon(Icons.chat_bubble_outline, size: 16),
+                                label: const Text("Chat", style: TextStyle(fontSize: 12)),
+                                style: OutlinedButton.styleFrom(
+                                  foregroundColor: const Color(0xFF0F3A40),
+                                  side: const BorderSide(color: Color(0xFF0F3A40)),
+                                  padding: const EdgeInsets.symmetric(vertical: 8),
+                                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
                                 ),
                               ),
-                            );
-                          }
-                          return Container();
-                        },
-                      ),
-                      TextButton(
-                        onPressed: () {
-                          Navigator.push(
-                            context,
-                            MaterialPageRoute(
-                              builder: (context) => ChatConversationScreen(
-                                chatId: _getChatId(FirebaseAuth.instance.currentUser!.uid, uid),
-                                otherUserId: uid,
-                                otherUserName: name,
-                              ),
                             ),
-                          );
-                        },
-                        child: const Text('Message', style: TextStyle(fontSize: 12, color: Color(0xFF0F3A40))),
-                      ),
-                    ],
+                          ],
+                        ),
+                      ],
+                    ),
                   ),
-                ],
-              ),
-            ],
-          ),
+              ],
+            );
+          },
         );
       },
+    );
+  }
+
+  Widget _buildDetailInfoRow(IconData icon, String label, String value, Color color) {
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Icon(icon, size: 16, color: color),
+        const SizedBox(width: 8),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(label, style: const TextStyle(fontSize: 12, color: Colors.grey, fontWeight: FontWeight.bold)),
+              Text(value, style: TextStyle(fontSize: 13, color: color.withOpacity(0.9), fontWeight: FontWeight.w500)),
+            ],
+          ),
+        ),
+      ],
     );
   }
 
@@ -1072,6 +1355,57 @@ class _ContractorDashboardState extends State<ContractorDashboard> {
     final ids = [id1, id2];
     ids.sort();
     return ids.join('_');
+  }
+
+  void _showQrDialog(String jobId, String jobName) {
+    final qrData = jsonEncode({
+      "jobId": jobId,
+      "type": "attendance",
+      "timestamp": DateTime.now().millisecondsSinceEpoch,
+    });
+
+    showDialog(
+      context: context,
+      builder: (context) {
+        return AlertDialog(
+          title: Text('Attendance QR: $jobName', style: const TextStyle(fontSize: 18, color: Color(0xFF0F3A40), fontWeight: FontWeight.bold)),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Text('Workers can scan this QR code to clock in and out.', textAlign: TextAlign.center, style: TextStyle(color: Colors.grey, fontSize: 13)),
+              const SizedBox(height: 20),
+              SizedBox(
+                width: 200,
+                height: 200,
+                child: QrImageView(
+                  data: qrData,
+                  version: QrVersions.auto,
+                  size: 200.0,
+                  backgroundColor: Colors.white,
+                ),
+              ),
+              const SizedBox(height: 24),
+              StreamBuilder<QuerySnapshot>(
+                stream: FirebaseFirestore.instance.collection('jobs').doc(jobId).collection('attendance').snapshots(),
+                builder: (context, snapshot) {
+                  if (!snapshot.hasData) return const SizedBox();
+                  final docs = snapshot.data!.docs;
+                  return Text('${docs.length} workers clocked in today', style: const TextStyle(fontWeight: FontWeight.bold, color: Color(0xFFA5555A)));
+                }
+              ),
+            ],
+          ),
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+          actionsAlignment: MainAxisAlignment.center,
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('Close', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
+            )
+          ],
+        );
+      }
+    );
   }
 
   Future<void> _manualCloseJob(String jobId) async {
@@ -1317,10 +1651,10 @@ class _ContractorDashboardState extends State<ContractorDashboard> {
         }
       },
       child: Scaffold(
-        backgroundColor: const Color(0xFFFBFBFC),
+        backgroundColor: Theme.of(context).scaffoldBackgroundColor,
         appBar: AppBar(
           leading: IconButton(
-            icon: const Icon(Icons.arrow_back, color: Color(0xFF0F3A40)),
+            icon: Icon(Icons.arrow_back, color: Theme.of(context).colorScheme.primary),
             onPressed: () {
               if (_selectedIndex != 0) {
                 setState(() => _selectedIndex = 0);
@@ -1337,7 +1671,7 @@ class _ContractorDashboardState extends State<ContractorDashboard> {
             style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 22, color: Color(0xFF0F3A40)),
             overflow: TextOverflow.ellipsis,
           ),
-          backgroundColor: Colors.white,
+          backgroundColor: Theme.of(context).appBarTheme.backgroundColor,
           elevation: 0,
           actions: [
             if (_selectedIndex == 1)
@@ -1423,7 +1757,10 @@ class _ContractorDashboardState extends State<ContractorDashboard> {
             ),
           ],
         ),
-        body: widgetOptions.elementAt(_selectedIndex),
+        body: IndexedStack(
+          index: _selectedIndex,
+          children: widgetOptions,
+        ),
         bottomNavigationBar: BottomNavigationBar(
           items: <BottomNavigationBarItem>[
             BottomNavigationBarItem(
@@ -1601,6 +1938,8 @@ class _ContractorAlertsScreenState extends State<ContractorAlertsScreen> {
       debugPrint("Error marking contractor alerts as read: $e");
     }
   }
+  bool _isDeleteMode = false;
+  final Set<String> _selectedAlertIds = {};
   final Map<String, String> _selectedLanguages = {};
 
   String _getTranslation(String originalText, String lang) {
@@ -1634,19 +1973,104 @@ class _ContractorAlertsScreenState extends State<ContractorAlertsScreen> {
     );
   }
 
+  Future<bool?> _showDeleteConfirm(BuildContext context, String message) {
+    return showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text("Confirm Delete"),
+        content: Text(message),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context, false), child: const Text("Cancel")),
+          TextButton(
+            onPressed: () => Navigator.pop(context, true), 
+            child: const Text("Delete", style: TextStyle(color: Colors.red, fontWeight: FontWeight.bold))
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _clearAllNotifications(BuildContext context, String uid) async {
+    final confirm = await _showDeleteConfirm(context, "This will permanently delete ALL notifications. This action cannot be undone.");
+    if (confirm != true) return;
+
+    try {
+      final snapshots = await FirebaseFirestore.instance
+          .collection('notifications')
+          .where('receiverId', isEqualTo: uid)
+          .get();
+
+      if (snapshots.docs.isNotEmpty) {
+        final batch = FirebaseFirestore.instance.batch();
+        for (var doc in snapshots.docs) {
+          batch.update(doc.reference, {'isDeleted': true});
+        }
+        await batch.commit();
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("All notifications cleared")));
+        }
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Error: $e"), backgroundColor: Colors.red));
+      }
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final uid = FirebaseAuth.instance.currentUser?.uid;
     return Scaffold(
-      backgroundColor: const Color(0xFFFBFBFC),
+      backgroundColor: Theme.of(context).scaffoldBackgroundColor,
       appBar: AppBar(
-        title: const Text('Notifications', style: TextStyle(fontWeight: FontWeight.bold, color: Color(0xFF0F3A40))),
-        backgroundColor: Colors.white,
+        title: Text('Notifications', style: TextStyle(fontWeight: FontWeight.bold, color: Theme.of(context).colorScheme.primary)),
+        backgroundColor: Theme.of(context).appBarTheme.backgroundColor,
         elevation: 0,
-        leading: IconButton(
-          icon: const Icon(Icons.arrow_back, color: Color(0xFF0F3A40)),
-          onPressed: () => Navigator.pop(context),
-        ),
+        leading: _isDeleteMode 
+          ? IconButton(
+              icon: const Icon(Icons.close, color: Color(0xFF0F3A40)),
+              onPressed: () => setState(() {
+                _isDeleteMode = false;
+                _selectedAlertIds.clear();
+              }),
+            )
+          : IconButton(
+              icon: Icon(Icons.arrow_back, color: Theme.of(context).colorScheme.primary),
+              onPressed: () => Navigator.pop(context),
+            ),
+        actions: [
+          if (!_isDeleteMode)
+            StreamBuilder<QuerySnapshot>(
+              stream: FirebaseFirestore.instance
+                  .collection('notifications')
+                  .where('receiverId', isEqualTo: uid)
+                  .snapshots(),
+              builder: (context, snapshot) {
+                final bool hasData = snapshot.hasData && snapshot.data!.docs.any((d) => (d.data() as Map)['isDeleted'] != true);
+                return Row(
+                  children: [
+                    IconButton(
+                      icon: const Icon(Icons.checklist, color: Color(0xFF0F3A40)),
+                      tooltip: "Select Messages",
+                      onPressed: hasData ? () => setState(() => _isDeleteMode = true) : null,
+                    ),
+                    IconButton(
+                      icon: const Icon(Icons.delete_sweep, color: Colors.red),
+                      tooltip: "Clear All Alerts",
+                      onPressed: hasData ? () => _clearAllNotifications(context, uid!) : null,
+                    ),
+                  ],
+                );
+              }
+            ),
+          if (_isDeleteMode)
+            IconButton(
+              icon: const Icon(Icons.delete, color: Colors.red),
+              onPressed: _selectedAlertIds.isEmpty ? null : () => _deleteSelectedAlerts(context),
+              tooltip: "Delete Selected",
+            ),
+          const SizedBox(width: 8),
+        ],
       ),
       body: StreamBuilder<QuerySnapshot>(
         stream: FirebaseFirestore.instance
@@ -1708,27 +2132,51 @@ class _ContractorAlertsScreenState extends State<ContractorAlertsScreen> {
               final timestamp = (data['timestamp'] as Timestamp?)?.toDate() ?? DateTime.now();
               final timeStr = "${timestamp.hour}:${timestamp.minute.toString().padLeft(2, '0')}";
 
-              return Card(
-                margin: const EdgeInsets.only(bottom: 12),
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-                elevation: 0,
-                color: Colors.white,
-                child: Container(
-                  decoration: BoxDecoration(
+              return InkWell(
+                onTap: _isDeleteMode 
+                  ? () => setState(() {
+                      if (_selectedAlertIds.contains(doc.id)) {
+                        _selectedAlertIds.remove(doc.id);
+                      } else {
+                        _selectedAlertIds.add(doc.id);
+                      }
+                    })
+                  : null,
+                child: Card(
+                  margin: const EdgeInsets.only(bottom: 12),
+                  shape: RoundedRectangleBorder(
                     borderRadius: BorderRadius.circular(16),
-                    border: Border.all(color: Colors.grey.shade100),
+                    side: _isDeleteMode && _selectedAlertIds.contains(doc.id)
+                        ? const BorderSide(color: Colors.red, width: 2)
+                        : BorderSide(color: Colors.grey.shade100),
                   ),
+                  elevation: 0,
+                  color: _isDeleteMode && _selectedAlertIds.contains(doc.id)
+                      ? Colors.red.withOpacity(0.05)
+                      : Theme.of(context).cardColor,
                   child: Column(
                     children: [
                       ListTile(
                         contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                        leading: CircleAvatar(
-                          backgroundColor: const Color(0xFF0F3A40).withOpacity(0.1),
+                        leading: _isDeleteMode
+                          ? Checkbox(
+                              value: _selectedAlertIds.contains(doc.id),
+                              onChanged: (val) => setState(() {
+                                if (val == true) {
+                                  _selectedAlertIds.add(doc.id);
+                                } else {
+                                  _selectedAlertIds.remove(doc.id);
+                                }
+                              }),
+                              activeColor: Colors.red,
+                            )
+                          : CircleAvatar(
+                          backgroundColor: Theme.of(context).colorScheme.primary.withOpacity(0.1),
                           child: Text(
                             (data['senderName'] != null && data['senderName'].toString().isNotEmpty) 
                                 ? data['senderName'].toString()[0].toUpperCase() 
                                 : 'W',
-                            style: const TextStyle(color: Color(0xFF0F3A40), fontWeight: FontWeight.bold),
+                            style: TextStyle(color: Theme.of(context).colorScheme.primary, fontWeight: FontWeight.bold),
                           ),
                         ),
                         title: Row(
@@ -1776,14 +2224,31 @@ class _ContractorAlertsScreenState extends State<ContractorAlertsScreen> {
                             ),
                             const SizedBox(height: 8),
                             Row(
+                              mainAxisAlignment: MainAxisAlignment.spaceBetween,
                               children: [
-                                const Icon(Icons.translate, size: 10, color: Colors.grey),
-                                const SizedBox(width: 4),
-                                _buildLangOption(doc.id, 'En', 'en'),
-                                const Text(" | ", style: TextStyle(fontSize: 10, color: Colors.grey)),
-                                _buildLangOption(doc.id, 'Hi', 'hi'),
-                                const Text(" | ", style: TextStyle(fontSize: 10, color: Colors.grey)),
-                                _buildLangOption(doc.id, 'Mr', 'mr'),
+                                Row(
+                                  children: [
+                                    const Icon(Icons.translate, size: 10, color: Colors.grey),
+                                    const SizedBox(width: 4),
+                                    _buildLangOption(doc.id, 'En', 'en'),
+                                    const Text(" | ", style: TextStyle(fontSize: 10, color: Colors.grey)),
+                                    _buildLangOption(doc.id, 'Hi', 'hi'),
+                                    const Text(" | ", style: TextStyle(fontSize: 10, color: Colors.grey)),
+                                    _buildLangOption(doc.id, 'Mr', 'mr'),
+                                  ],
+                                ),
+                                IconButton(
+                                  icon: const Icon(Icons.delete_outline, size: 20, color: Colors.grey),
+                                  onPressed: () async {
+                                    final confirm = await _showDeleteConfirm(context, "Are you sure you want to delete this notification?");
+                                    if (confirm == true) {
+                                      await doc.reference.update({'isDeleted': true});
+                                    }
+                                  },
+                                  tooltip: "Delete notification",
+                                  padding: EdgeInsets.zero,
+                                  constraints: const BoxConstraints(),
+                                ),
                               ],
                             ),
                           ],
@@ -1815,8 +2280,8 @@ class _ContractorAlertsScreenState extends State<ContractorAlertsScreen> {
                                   ),
                                 );
                               },
-                              icon: const Icon(Icons.reply, size: 18, color: Color(0xFF0F3A40)),
-                              label: const Text('Respond', style: TextStyle(color: Color(0xFF0F3A40), fontWeight: FontWeight.bold)),
+                              icon: Icon(Icons.reply, size: 18, color: Theme.of(context).colorScheme.primary),
+                              label: Text('Respond', style: TextStyle(color: Theme.of(context).colorScheme.primary, fontWeight: FontWeight.bold)),
                             ),
                           ],
                         ),
@@ -1831,4 +2296,30 @@ class _ContractorAlertsScreenState extends State<ContractorAlertsScreen> {
       ),
     );
   }
+  Future<void> _deleteSelectedAlerts(BuildContext context) async {
+    final confirm = await _showDeleteConfirm(context, "Are you sure you want to delete ${_selectedAlertIds.length} selected notifications?");
+    if (confirm != true) return;
+
+    try {
+      final batch = FirebaseFirestore.instance.batch();
+      for (String id in _selectedAlertIds) {
+        batch.update(FirebaseFirestore.instance.collection('notifications').doc(id), {'isDeleted': true});
+      }
+      await batch.commit();
+      
+      if (mounted) {
+        setState(() {
+          _isDeleteMode = false;
+          _selectedAlertIds.clear();
+        });
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Selected notifications deleted")));
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Error: $e"), backgroundColor: Colors.red));
+      }
+    }
+  }
 }
+
+
