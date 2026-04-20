@@ -18,6 +18,10 @@ import 'profile_sections/ai_support_chat_screen.dart';
 import 'services/translation_helper.dart';
 import 'job_map_screen.dart';
 import 'services/notification_service.dart';
+import 'services/payment_service.dart';
+import 'payment_settings_screen.dart';
+import 'package:intl/intl.dart';
+
 
 class WorkerDashboard extends StatefulWidget {
   final int initialIndex;
@@ -180,9 +184,11 @@ class _WorkerDashboardState extends State<WorkerDashboard> {
     switch (_selectedIndex) {
       case 0: return 'Dashboard';
       case 1: return 'Jobs';
-      case 2: return 'Messages';
-      case 3: return 'Settings';
+      case 2: return 'Wallet';
+      case 3: return 'Messages';
+      case 4: return 'Settings';
       default: return "Worker Dashboard";
+
     }
   }
 
@@ -805,9 +811,11 @@ class _WorkerDashboardState extends State<WorkerDashboard> {
     List<Widget> widgetOptions = <Widget>[
       _buildHomeView(),
       _buildMyJobsView(),
+      _buildWalletView(),
       const ChatsListScreen(),
       const WorkerProfileScreen(),
     ];
+
 
     return WillPopScope(
       onWillPop: () async {
@@ -1004,6 +1012,12 @@ class _WorkerDashboardState extends State<WorkerDashboard> {
               label: 'Jobs',
             ),
             BottomNavigationBarItem(
+              icon: const Icon(Icons.account_balance_wallet_outlined),
+              activeIcon: const Icon(Icons.account_balance_wallet),
+              label: 'Wallet',
+            ),
+
+            BottomNavigationBarItem(
               icon: StreamBuilder<QuerySnapshot>(
                 stream: FirebaseFirestore.instance
                     .collection('chats')
@@ -1124,6 +1138,318 @@ class _WorkerDashboardState extends State<WorkerDashboard> {
       ),
     );
   }
+  Widget _buildWalletView() {
+    return StreamBuilder<DocumentSnapshot>(
+      stream: PaymentService.instance.getWalletStream(),
+      builder: (context, snapshot) {
+        final data = snapshot.data?.data() as Map<String, dynamic>?;
+        final double balance = (data?['walletBalance'] ?? 0.0).toDouble();
+        
+        return CustomScrollView(
+          slivers: [
+            SliverToBoxAdapter(
+              child: Padding(
+                padding: const EdgeInsets.all(24.0),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    // Glass Balance Card
+                    Container(
+                      width: double.infinity,
+                      padding: const EdgeInsets.all(32),
+                      decoration: BoxDecoration(
+                        gradient: const LinearGradient(
+                          colors: [Color(0xFF0F3A40), Color(0xFF1B5E68)],
+                          begin: Alignment.topLeft,
+                          end: Alignment.bottomRight,
+                        ),
+                        borderRadius: BorderRadius.circular(32),
+                        boxShadow: [
+                          BoxShadow(
+                            color: const Color(0xFF0F3A40).withOpacity(0.3),
+                            blurRadius: 20,
+                            offset: const Offset(0, 10),
+                          ),
+                        ],
+                      ),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          const Text('Total Balance', style: TextStyle(color: Colors.white70, fontSize: 16)),
+                          const SizedBox(height: 12),
+                          Text(
+                            '₹${balance.toStringAsFixed(2)}',
+                            style: const TextStyle(
+                              color: Colors.white,
+                              fontSize: 42,
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
+                          const SizedBox(height: 32),
+                          Row(
+                            children: [
+                              Expanded(
+                                child: ElevatedButton(
+                                  onPressed: () => _showWithdrawalDialog(context, balance),
+                                  style: ElevatedButton.styleFrom(
+                                    backgroundColor: Colors.white.withOpacity(0.2),
+                                    foregroundColor: Colors.white,
+                                    elevation: 0,
+                                    padding: const EdgeInsets.symmetric(vertical: 16),
+                                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                                  ),
+                                  child: const Text('Withdraw', style: TextStyle(fontWeight: FontWeight.bold)),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(height: 40),
+                    const Text(
+                      'Transaction History',
+                      style: TextStyle(
+                        fontSize: 20,
+                        fontWeight: FontWeight.bold,
+                        color: Color(0xFF0F3A40),
+                      ),
+                    ),
+                    const SizedBox(height: 16),
+                  ],
+                ),
+              ),
+            ),
+            StreamBuilder<QuerySnapshot>(
+              stream: PaymentService.instance.getTransactionsStream(),
+              builder: (context, transSnapshot) {
+                if (!transSnapshot.hasData || transSnapshot.data!.docs.isEmpty) {
+                  return SliverFillRemaining(
+                    hasScrollBody: false,
+                    child: Center(
+                      child: Column(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          Icon(Icons.history_toggle_off, size: 64, color: Colors.grey.withOpacity(0.5)),
+                          const SizedBox(height: 16),
+                          const Text('No transactions yet', style: TextStyle(color: Colors.grey)),
+                        ],
+                      ),
+                    ),
+                  );
+                }
+
+                return SliverList(
+                  delegate: SliverChildBuilderDelegate(
+                    (context, index) {
+                      final doc = transSnapshot.data!.docs[index];
+                      final tData = doc.data() as Map<String, dynamic>;
+                      return _buildTransactionItem(tData);
+                    },
+                    childCount: transSnapshot.data!.docs.length,
+                  ),
+                );
+              },
+            ),
+            const SliverToBoxAdapter(child: SizedBox(height: 100)),
+          ],
+        );
+      },
+    );
+  }
+
+  Future<void> _showWithdrawalDialog(BuildContext context, double balance) async {
+    final details = await PaymentService.instance.getPaymentDetails();
+    final TextEditingController amountController = TextEditingController();
+    final upiId = details?['upiId'] ?? '';
+
+    if (context.mounted) {
+      if (upiId.isEmpty) {
+        showDialog(
+          context: context,
+          builder: (context) => AlertDialog(
+            title: const Text("Bank Details Missing"),
+            content: const Text("Please add your UPI or Bank details in Payment Settings before withdrawing."),
+            actions: [
+              TextButton(onPressed: () => Navigator.pop(context), child: const Text("Cancel")),
+              ElevatedButton(
+                onPressed: () {
+                  Navigator.pop(context);
+                  Navigator.push(context, MaterialPageRoute(builder: (context) => const PaymentSettingsScreen()));
+                },
+                child: const Text("Add Details"),
+              ),
+            ],
+          ),
+        );
+        return;
+      }
+
+      showDialog(
+        context: context,
+        builder: (context) => StatefulBuilder(
+          builder: (context, setDialogState) {
+            bool isProcessing = false;
+            String? errorText;
+
+            return AlertDialog(
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
+              title: Column(
+                children: [
+                   const Icon(Icons.account_balance_wallet, size: 48, color: Color(0xFF0F3A40)),
+                   const SizedBox(height: 12),
+                   const Text("Withdraw Funds", style: TextStyle(fontWeight: FontWeight.bold)),
+                   Text("Available: ₹${balance.toStringAsFixed(0)}", style: const TextStyle(fontSize: 14, color: Colors.grey)),
+                ],
+              ),
+              content: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  TextField(
+                    controller: amountController,
+                    keyboardType: TextInputType.number,
+                    decoration: InputDecoration(
+                      labelText: "Amount to Withdraw",
+                      prefixText: "₹ ",
+                      errorText: errorText,
+                      border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+                    ),
+                    onChanged: (val) {
+                      final amt = double.tryParse(val) ?? 0;
+                      if (amt > balance) {
+                        setDialogState(() => errorText = "Exceeds balance");
+                      } else {
+                        setDialogState(() => errorText = null);
+                      }
+                    },
+                  ),
+                  const SizedBox(height: 16),
+                  Container(
+                    padding: const EdgeInsets.all(12),
+                    decoration: BoxDecoration(
+                      color: Colors.blue.withOpacity(0.05),
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    child: Row(
+                      children: [
+                        const Icon(Icons.info_outline, size: 16, color: Colors.blue),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: Text(
+                            "Funds will be sent to UPI: $upiId",
+                            style: const TextStyle(fontSize: 12, color: Colors.blue),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+              actions: [
+                TextButton(
+                  onPressed: isProcessing ? null : () => Navigator.pop(context), 
+                  child: const Text("Cancel")
+                ),
+                ElevatedButton(
+                  onPressed: (isProcessing || errorText != null) ? null : () async {
+                    final amt = double.tryParse(amountController.text) ?? 0;
+                    if (amt <= 0) return;
+
+                    setDialogState(() => isProcessing = true);
+                    try {
+                      await PaymentService.instance.requestWithdrawal(amount: amt, upiId: upiId);
+                      if (context.mounted) {
+                        Navigator.pop(context);
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          const SnackBar(content: Text("Withdrawal request sent!"), backgroundColor: Colors.green),
+                        );
+                      }
+                    } catch (e) {
+                      setDialogState(() {
+                        isProcessing = false;
+                        errorText = e.toString();
+                      });
+                    }
+                  },
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: const Color(0xFF0F3A40),
+                    foregroundColor: Colors.white,
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                  ),
+                  child: isProcessing 
+                    ? const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
+                    : const Text("Withdraw"),
+                ),
+              ],
+            );
+          }
+        ),
+      );
+    }
+  }
+
+  Widget _buildTransactionItem(Map<String, dynamic> data) {
+    final DateTime timestamp = (data['timestamp'] as Timestamp?)?.toDate() ?? DateTime.now();
+    final double amount = (data['amount'] ?? 0.0).toDouble();
+    final String type = data['type'] ?? 'payout';
+    final bool isIncome = type == 'payout';
+
+    return Container(
+      margin: const EdgeInsets.symmetric(horizontal: 24, vertical: 8),
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(20),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.03),
+            blurRadius: 10,
+            offset: const Offset(0, 4),
+          ),
+        ],
+      ),
+      child: Row(
+        children: [
+          Container(
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(
+              color: isIncome ? Colors.green.withOpacity(0.1) : Colors.red.withOpacity(0.1),
+              shape: BoxShape.circle,
+            ),
+            child: Icon(
+              isIncome ? Icons.arrow_downward : Icons.arrow_upward,
+              color: isIncome ? Colors.green : Colors.red,
+              size: 24,
+            ),
+          ),
+          const SizedBox(width: 16),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  isIncome ? 'Payment Received' : 'Withdrawal',
+                  style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
+                ),
+                Text(
+                  DateFormat('MMM dd, yyyy • hh:mm a').format(timestamp),
+                  style: const TextStyle(color: Colors.grey, fontSize: 12),
+                ),
+              ],
+            ),
+          ),
+          Text(
+            '${isIncome ? '+' : '-'} ₹${amount.toStringAsFixed(0)}',
+            style: TextStyle(
+              fontWeight: FontWeight.bold,
+              fontSize: 18,
+              color: isIncome ? Colors.green : Colors.red,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
 }
 
 class WorkerAlertsScreen extends StatefulWidget {
@@ -1166,12 +1492,9 @@ class _WorkerAlertsScreenState extends State<WorkerAlertsScreen> {
       debugPrint("Error marking worker alerts as read: $e");
     }
   }
-
-
   String _getTranslation(String originalText, String lang) {
     return TranslationHelper.translate(originalText, lang);
   }
-
   Widget _buildLangOption(String alertId, String label, String langCode) {
     final bool isSelected = (_selectedLanguages[alertId] ?? 'en') == langCode;
     return GestureDetector(

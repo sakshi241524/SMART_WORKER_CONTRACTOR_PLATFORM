@@ -20,6 +20,8 @@ class _PostJobScreenState extends State<PostJobScreen> {
   final TextEditingController _startTimeController = TextEditingController();
   final TextEditingController _endTimeController = TextEditingController();
   final TextEditingController _messageController = TextEditingController();
+  final TextEditingController _budgetController = TextEditingController();
+
   
   DateTime _selectedDate = DateTime.now();
   TimeOfDay? _startTime;
@@ -174,6 +176,8 @@ class _PostJobScreenState extends State<PostJobScreen> {
         'endTime': _endTime!.format(context),
         'contractorMessage': _messageController.text.trim(),
         'requiredWorkers': _selectedWorkers,
+        'budgetPerWorker': double.tryParse(_budgetController.text) ?? 0.0,
+        'paymentStatus': 'unpaid',
         'acceptedWorkers': _selectedWorkers.map((key, value) => MapEntry(key, [])),
         'targetedWorkerIds': targetedWorkerIds, // Targeted dispatch
         'status': 'open',
@@ -243,6 +247,8 @@ class _PostJobScreenState extends State<PostJobScreen> {
               _buildTextField(_contractorNameController, 'Contractor Name'),
               _buildTextField(_phoneNumberController, 'Phone Number', keyboardType: TextInputType.phone),
               _buildTextField(_addressController, 'Construction Address', maxLines: 2),
+              _buildTextField(_budgetController, 'Daily Wage / Budget per Worker (₹)', keyboardType: TextInputType.number),
+
               
               const SizedBox(height: 16),
               const Text('Working Hours', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18, color: Color(0xFF0F3A40))),

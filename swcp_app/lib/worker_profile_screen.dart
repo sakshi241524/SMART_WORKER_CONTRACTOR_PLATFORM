@@ -12,6 +12,7 @@ import 'profile_sections/work_history_screen.dart';
 import 'profile_sections/account_settings_screen.dart';
 import 'profile_sections/help_support_screen.dart';
 import 'widgets/reviews_list_widget.dart';
+import 'payment_settings_screen.dart';
 import 'package:provider/provider.dart';
 import 'app_state.dart';
 import 'services/notification_service.dart';
@@ -140,6 +141,11 @@ class _WorkerProfileScreenState extends State<WorkerProfileScreen> {
             icon: Icons.settings_outlined,
             title: "Account Settings",
             onTap: () => Navigator.push(context, MaterialPageRoute(builder: (context) => const AccountSettingsScreen())),
+          ),
+          _buildMenuItem(
+            icon: Icons.account_balance_outlined,
+            title: "Payment Settings",
+            onTap: () => Navigator.push(context, MaterialPageRoute(builder: (context) => const PaymentSettingsScreen())),
           ),
 
           _buildMenuItem(

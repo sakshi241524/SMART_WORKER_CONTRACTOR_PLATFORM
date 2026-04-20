@@ -24,6 +24,8 @@ import 'services/translation_helper.dart';
 import 'package:geocoding/geocoding.dart';
 import 'widgets/leave_review_dialog.dart';
 import 'services/notification_service.dart';
+import 'services/payment_service.dart';
+
 
 class ContractorDashboard extends StatefulWidget {
   final int initialIndex;
@@ -53,7 +55,7 @@ class _ContractorDashboardState extends State<ContractorDashboard> {
     } else {
       _myJobsStream = const Stream.empty();
     }
-    
+   
     _fetchUserName();
     _setupNotifications();
   }
@@ -571,8 +573,7 @@ class _ContractorDashboardState extends State<ContractorDashboard> {
             ),
           ),
         ),
-
-        
+                
         if (_selectedState != null || _selectedDistrict != null || _selectedProfession != null || _educationFilter.isNotEmpty || _showOnlyShortlisted)
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 8.0),
@@ -1318,6 +1319,55 @@ class _ContractorDashboardState extends State<ContractorDashboard> {
                                   shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
                                 ),
                               ),
+                            ),
+
+                            // Release Payment Button
+                            const SizedBox(width: 8),
+                            StreamBuilder<DocumentSnapshot>(
+                              stream: FirebaseFirestore.instance.collection('jobs').doc(jobId).snapshots(),
+                              builder: (context, jobSnap) {
+                                final jData = jobSnap.data?.data() as Map<String, dynamic>?;
+                                final releasedPayments = jData?['releasedPayments'] ?? {};
+                                final isReleased = releasedPayments.containsKey(uid);
+                                final budget = (jData?['budgetPerWorker'] ?? 0.0).toDouble();
+
+                                return Expanded(
+                                  flex: isReleased ? 1 : 2, // Give more space for the currency amount
+                                  child: ElevatedButton(
+                                    onPressed: (isReleased || budget <= 0) ? null : () async {
+                                      try {
+                                        await PaymentService.instance.releasePayment(
+                                          jobId: jobId,
+                                          workerId: uid,
+                                          amount: budget,
+                                        );
+                                        if (context.mounted) {
+                                          ScaffoldMessenger.of(context).showSnackBar(
+                                            const SnackBar(content: Text("Payment released successfully!"), backgroundColor: Colors.green),
+                                          );
+                                        }
+                                      } catch (e) {
+                                        if (context.mounted) {
+                                          ScaffoldMessenger.of(context).showSnackBar(
+                                            SnackBar(content: Text("Error: $e"), backgroundColor: Colors.red),
+                                          );
+                                        }
+                                      }
+                                    },
+                                    style: ElevatedButton.styleFrom(
+                                      backgroundColor: isReleased ? Colors.green.shade100 : const Color(0xFFA5555A),
+                                      foregroundColor: isReleased ? Colors.green : Colors.white,
+                                      elevation: 0,
+                                      padding: const EdgeInsets.symmetric(vertical: 8),
+                                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                                    ),
+                                    child: Text(
+                                      isReleased ? "Paid" : "Pay ₹${budget.toInt()}",
+                                      style: const TextStyle(fontSize: 11, fontWeight: FontWeight.bold),
+                                    ),
+                                  ),
+                                );
+                              },
                             ),
                           ],
                         ),

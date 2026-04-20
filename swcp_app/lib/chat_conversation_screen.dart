@@ -147,6 +147,9 @@ class _ChatConversationScreenState extends State<ChatConversationScreen> {
       });
 
       // Send notification to the other user
+      final userDoc = await FirebaseFirestore.instance.collection('users').doc(currentUserUid).get();
+      final currentUserName = userDoc.data()?['name'] ?? 'User';
+
       NotificationSenderService.sendNotification(
         recipientUid: widget.otherUserId,
         title: "New Message from $currentUserName",

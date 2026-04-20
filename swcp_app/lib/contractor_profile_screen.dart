@@ -11,6 +11,7 @@ import 'profile_sections/skills_certificates_screen.dart';
 import 'profile_sections/contractor_experience_screen.dart';
 import 'profile_sections/account_settings_screen.dart';
 import 'profile_sections/help_support_screen.dart';
+import 'payment_settings_screen.dart';
 import 'package:provider/provider.dart';
 import 'app_state.dart';
 import 'services/notification_service.dart';
@@ -132,6 +133,11 @@ class _ContractorProfileScreenState extends State<ContractorProfileScreen> {
             icon: Icons.settings_outlined,
             title: "Account Settings",
             onTap: () => Navigator.push(context, MaterialPageRoute(builder: (context) => const AccountSettingsScreen())),
+          ),
+          _buildMenuItem(
+            icon: Icons.account_balance_outlined,
+            title: "Payment Settings",
+            onTap: () => Navigator.push(context, MaterialPageRoute(builder: (context) => const PaymentSettingsScreen())),
           ),
 
           _buildMenuItem(

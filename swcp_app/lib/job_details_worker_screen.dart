@@ -320,6 +320,7 @@ class _JobDetailsWorkerScreenState extends State<JobDetailsWorkerScreen> {
             if (widget.jobData['startTime'] != null && widget.jobData['endTime'] != null)
               _buildInfoSection(Icons.access_time_outlined, 'Working Hours', '${widget.jobData['startTime']} - ${widget.jobData['endTime']}'),
             _buildInfoSection(Icons.location_on_outlined, 'Location', widget.jobData['address'] ?? 'Not provided'),
+            _buildInfoSection(Icons.payments_outlined, 'Daily Wage / Budget', '₹${widget.jobData['budgetPerWorker'] ?? 'Negotiable'} per worker'),
             _buildInfoSection(Icons.phone_outlined, 'Contact', widget.jobData['phoneNumber'] ?? 'Not provided'),
             if (widget.jobData['contractorMessage'] != null && widget.jobData['contractorMessage'].toString().isNotEmpty)
               _buildInfoSection(Icons.message_outlined, 'Message from Contractor', widget.jobData['contractorMessage']),

@@ -24,6 +24,8 @@ class _DirectPostJobScreenState extends State<DirectPostJobScreen> {
   final TextEditingController _countryController = TextEditingController();
   final TextEditingController _stateController = TextEditingController();
   final TextEditingController _districtController = TextEditingController();
+  final TextEditingController _budgetController = TextEditingController();
+
   
   DateTime _selectedDate = DateTime.now();
   final List<String> _professions = [
@@ -173,8 +175,11 @@ class _DirectPostJobScreenState extends State<DirectPostJobScreen> {
         'address': _addressController.text.trim(),
         'date': Timestamp.fromDate(_selectedDate),
         'requiredWorkers': _selectedWorkers,
+        'budgetPerWorker': double.tryParse(_budgetController.text) ?? 0.0,
+        'paymentStatus': 'unpaid',
         'acceptedWorkers': _selectedWorkers.map((key, value) => MapEntry(key, [])),
         'status': 'open',
+
         'latitude': _contractorLat,
         'longitude': _contractorLng,
         'createdAt': FieldValue.serverTimestamp(),
@@ -309,6 +314,8 @@ class _DirectPostJobScreenState extends State<DirectPostJobScreen> {
               _buildTextField(_contractorNameController, 'Contractor Name'),
               _buildTextField(_phoneNumberController, 'Phone Number', keyboardType: TextInputType.phone),
               _buildTextField(_addressController, 'Construction Address', maxLines: 2),
+              _buildTextField(_budgetController, 'Job Budget (₹)', keyboardType: TextInputType.number),
+
               
               const SizedBox(height: 16),
               const Text('Job Date', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16, color: Color(0xFF0F3A40))),
