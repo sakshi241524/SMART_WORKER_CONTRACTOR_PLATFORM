@@ -205,7 +205,6 @@ class _WorkerProfileScreenState extends State<WorkerProfileScreen> {
       ),
     );
   }
-
   Widget _buildMenuItem({required IconData icon, required String title, required VoidCallback onTap}) {
     return InkWell(
       onTap: onTap,
