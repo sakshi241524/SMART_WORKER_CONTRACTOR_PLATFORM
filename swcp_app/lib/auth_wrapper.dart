@@ -14,14 +14,10 @@ class AuthWrapper extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final appState = Provider.of<AppState>(context);
-    
-    // 0. Always show the Welcome screen first for a fresh session
+
     if (appState.shouldShowWelcome) {
       return const WelcomeScreen();
     }
-
-    // 1. After Welcome is dismissed, show Role Selection
-    // RoleSelectionScreen handles skipping the Sign In page if user is already logged in.
     return const RoleSelectionScreen();
   }
 }

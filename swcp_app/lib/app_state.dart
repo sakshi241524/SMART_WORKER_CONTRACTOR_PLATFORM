@@ -6,7 +6,7 @@ class AppState extends ChangeNotifier {
   Locale _locale = const Locale('en');
   
   // Persistence fields
-  String _lastGuestRoute = 'Welcome'; // 'Welcome' or 'RoleSelection'
+  String _lastGuestRoute = 'Welcome'; 
   int _lastDashboardIndex = 0;
 
   // Session state (not persisted)
